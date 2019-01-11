@@ -36,29 +36,11 @@
 
 #include "Pi1581.h"
 
-extern Pi1581 pi1581;
-
-extern bool bLoggingCYCs;
-int stepcount = 0;
-int racount = 0;
-
 // Clocks
 //	Master 16Mhz
 //		into 74ls93
 //			QB - 16Mhz / 2 = 8MHz (177x)
 //			QD - 16Mhz / 8 = 2MHz (6502)
-// CS
-// 8520
-//	$4000
-//
-// 1770
-//	$6000
-//
-// ROM
-//	$8000
-//
-// RAM
-// 0-$1fff
 
 // Disk spins at 300rpm = 5rps so to calculate how many 8Mhz cycles one rotation takes;-
 // 8000000 / 5 = 1600000;
@@ -1198,8 +1180,6 @@ void WD177x::Write(unsigned int address, unsigned char value)
 
 						//  An interrupt is generated at the completion of the command.
 						stepDirection = -1;
-						stepcount++;
-						//DEBUG_LOG("STEP OUT %d\r\n", stepcount);
 
 						commandType = 1;
 					break;
@@ -1255,9 +1235,6 @@ void WD177x::Write(unsigned int address, unsigned char value)
 						settleCycleDelay = 0;
 
 						readAddressState = SEARCHING_FOR_NEXT_ID;
-
-						racount++;
-						//DEBUG_LOG("READ_ADDRESS %d\r\n", racount);
 
 						commandType = 3;
 					break;

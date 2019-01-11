@@ -41,13 +41,14 @@ extern "C"
 #include "Pi1581.h"
 #include "FileBrowser.h"
 #include "ScreenLCD.h"
+#include "SpinLock.h"
 
 #include "logo.h"
 #include "sample.h"
 #include "ssd_logo.h"
 
 unsigned versionMajor = 1;
-unsigned versionMinor = 15;
+unsigned versionMinor = 19;
 
 // When the emulated CPU starts we execute the first million odd cycles in non-real-time (ie as fast as possible so the emulated 1541 becomes responsive to CBM-Browser asap)
 // During these cycles the CPU is executing the ROM self test routines (these do not need to be cycle accurate)
@@ -80,7 +81,7 @@ enum EmulatingMode
 	EMULATING_1581
 };
 
-EmulatingMode emulating;
+volatile EmulatingMode emulating;
 
 typedef void(*func_ptr)();
 
@@ -97,6 +98,7 @@ u8 LcdLogoFile[LCD_LOGO_MAX_SIZE];
 
 u8 s_u8Memory[0xc000];
 
+int numberOfUSBMassStorageDevices = 0;
 DiskCaddy diskCaddy;
 Pi1541 pi1541;
 Pi1581 pi1581;
@@ -109,9 +111,12 @@ u8 deviceID = 8;
 IEC_Commands m_IEC_Commands;
 InputMappings* inputMappings;
 Keyboard* keyboard;
+bool USBKeyboardDetected = false;
 //bool resetWhileEmulating = false;
 bool selectedViaIECCommands = false;
 u16 pc;
+
+SpinLock core0RefreshingScreen;
 
 unsigned int screenWidth = 1024;
 unsigned int screenHeight = 768;
@@ -248,6 +253,7 @@ void InitialiseLCD()
 	int i2cLcdOnContrast = options.I2CLcdOnContrast();
 	int i2cLcdDimContrast = options.I2CLcdDimContrast();
 	int i2cLcdDimTime = options.I2CLcdDimTime();
+	int i2cLcdUseCBMChar = options.I2cLcdUseCBMChar();
 	LCD_MODEL i2cLcdModel = options.I2CLcdModel();
 
 	if (i2cLcdModel)
@@ -257,7 +263,7 @@ void InitialiseLCD()
 		if (i2cLcdModel == LCD_1306_128x32)
 			height = 32;
 		screenLCD = new ScreenLCD();
-		screenLCD->Open(width, height, 1, i2cBusMaster, i2cLcdAddress, i2cLcdFlip, i2cLcdModel);
+		screenLCD->Open(width, height, 1, i2cBusMaster, i2cLcdAddress, i2cLcdFlip, i2cLcdModel, i2cLcdUseCBMChar);
 		screenLCD->SetContrast(i2cLcdOnContrast);
 		screenLCD->ClearInit(0); // sh1106 needs this
 
@@ -266,7 +272,7 @@ void InitialiseLCD()
 		{
 			screenLCD->PlotRawImage(logo_ssd_1541ii, 0, 0, width, height);
 			snprintf(tempBuffer, tempBufferSize, "Pi1541 V%d.%02d", versionMajor, versionMinor);
-			screenLCD->PrintText(0, 16, 0, tempBuffer, 0xffffffff);
+			screenLCD->PrintText(false, 16, 0, tempBuffer, 0xffffffff);
 			logo_done = true;
 		}
 		else if (( height == 64) && (strcasecmp(options.GetLcdLogoName(), "1541classic") == 0) )
@@ -295,7 +301,7 @@ void InitialiseLCD()
 			snprintf(tempBuffer, tempBufferSize, "Pi1541 V%d.%02d", versionMajor, versionMinor);
 			int x = (width - 8*strlen(tempBuffer) ) /2;
 			int y = (height-16)/2;
-			screenLCD->PrintText(0, x, y, tempBuffer, 0x0);
+			screenLCD->PrintText(false, x, y, tempBuffer, 0x0);
 		}
 		screenLCD->RefreshScreen();
 	}
@@ -343,7 +349,7 @@ void UpdateScreen()
 	int top, top2, top3;
 	int bottom;
 	int graphX = 0;
-	//bool refreshUartStatusDisplay;
+  //bool refreshUartStatusDisplay;
 
 	top = screenHeight - height / 2;
 	bottom = screenHeight - 1;
@@ -500,14 +506,21 @@ void UpdateScreen()
 
 				if (screenLCD)
 				{
+					core0RefreshingScreen.Acquire();
+
+					IEC_Bus::WaitMicroSeconds(100);
+
 					screenLCD->PrintText(false, 0, 0, tempBuffer, 0, RGBA(0xff, 0xff, 0xff, 0xff));
 					//				screenLCD->SetContrast(255.0/79.0*track);
 					screenLCD->RefreshRows(0, 1);
+
+					IEC_Bus::WaitMicroSeconds(100);
+					core0RefreshingScreen.Release();
 				}
 
 			}
 		}
-		else
+		else if (emulating == EMULATING_1581)
 		{
 			track = pi1581.wd177x.GetCurrentTrack();
 			if (track != oldTrack)
@@ -519,9 +532,13 @@ void UpdateScreen()
 
 				if (screenLCD)
 				{
+					core0RefreshingScreen.Acquire();
+					IEC_Bus::WaitMicroSeconds(100);
 					screenLCD->PrintText(false, 0, 0, tempBuffer, 0, RGBA(0xff, 0xff, 0xff, 0xff));
 					//				screenLCD->SetContrast(255.0/79.0*track);
 					screenLCD->RefreshRows(0, 1);
+					IEC_Bus::WaitMicroSeconds(100);
+					core0RefreshingScreen.Release();
 				}
 
 			}
@@ -707,7 +724,8 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 			//read32(ARM_SYSTIMER_CLO);	//Each one of these is > 100ns
 			//read32(ARM_SYSTIMER_CLO);
 			//read32(ARM_SYSTIMER_CLO);
-			//IEC_Bus::RefreshOuts();	// Now output all outputs.
+
+			IEC_Bus::RefreshOuts1541();	// Now output all outputs.
 
 			IEC_Bus::OutputLED = pi1541.drive.IsLEDOn();
 			if (IEC_Bus::OutputLED ^ oldLED)
@@ -732,20 +750,10 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 				}
 			}
 
-			//if (options.SoundOnGPIO() && headSoundCounter > 0)
-			//{
-			//	headSoundFreqCounter--;		// Continue updating a GPIO non DMA sound.
-			//	if (headSoundFreqCounter <= 0)
-			//	{
-			//		headSoundFreqCounter = headSoundFreq;
-			//		headSoundCounter -= headSoundFreq * 8;
-			//		IEC_Bus::OutputSound = !IEC_Bus::OutputSound;
-			//	}
-			//}
 
-
-			IEC_Bus::RefreshOuts1541();	// Now output all outputs.
 		}
+
+		IEC_Bus::ReadButtonsEmulationMode();
 
 		// Other core will check the uart (as it is slow) (could enable uart irqs - will they execute on this core?)
 		inputMappings->CheckKeyboardEmulationMode(numberOfImages, numberOfImagesMax);
@@ -851,7 +859,7 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 	int headSoundFreqCounter = 0;
 	//			const int headSoundFreq = 833;	// 1200Hz = 1/1200 * 10^6;
 	const int headSoundFreq = 1000000 / options.SoundOnGPIOFreq();	// 1200Hz = 1/1200 * 10^6;
-	unsigned char oldHeadDir;
+	unsigned int oldTrack;
 	int resetCount = 0;
 
 	unsigned numberOfImages = diskCaddy.GetNumberOfImages();
@@ -877,6 +885,8 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 
 	//resetWhileEmulating = false;
 	selectedViaIECCommands = false;
+
+	oldTrack = pi1581.wd177x.GetCurrentTrack();
 
 	while (exitReason == EXIT_UNKNOWN)
 	{
@@ -912,10 +922,11 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 			}
 			pi1581.m6502.Step();
 			pi1581.Update();
-			IEC_Bus::RefreshOuts1581();	// Now output all outputs.
 		}
 
-		if (cycleCount >= FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap. During this time we don't need to set outputs.
+		IEC_Bus::RefreshOuts1581();	// Now output all outputs.
+
+		//if (cycleCount >= FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap. During this time we don't need to set outputs.
 		{
 			IEC_Bus::OutputLED = pi1581.IsLEDOn();
 			if (IEC_Bus::OutputLED ^ oldLED)
@@ -924,9 +935,22 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 				oldLED = IEC_Bus::OutputLED;
 			}
 
-			//IEC_Bus::RefreshOuts1581();	// Now output all outputs.
+			// Do head moving sound
+			unsigned int track = pi1581.wd177x.GetCurrentTrack();
+			if (track != oldTrack)	// Need to start a new sound?
+			{
+				oldTrack = track;
+				if (options.SoundOnGPIO())
+				{
+					headSoundCounter = 1000 * options.SoundOnGPIODuration();
+					headSoundFreqCounter = headSoundFreq;
+				}
+				else
+				{
+					PlaySoundDMA();
+				}
+			}
 		}
-
 
 		// Other core will check the uart (as it is slow) (could enable uart irqs - will they execute on this core?)
 		inputMappings->CheckKeyboardEmulationMode(numberOfImages, numberOfImagesMax);
@@ -973,6 +997,47 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 		}
 		ctBefore = ctAfter;
 
+		if (options.SoundOnGPIO() && headSoundCounter > 0)
+		{
+			headSoundFreqCounter--;		// Continue updating a GPIO non DMA sound.
+			if (headSoundFreqCounter <= 0)
+			{
+				headSoundFreqCounter = headSoundFreq;
+				headSoundCounter -= headSoundFreq * 8;
+				IEC_Bus::OutputSound = !IEC_Bus::OutputSound;
+			}
+		}
+
+		if (numberOfImages > 1)
+		{
+			bool nextDisk = inputMappings->NextDisk();
+			bool prevDisk = inputMappings->PrevDisk();
+			if (nextDisk)
+			{
+				pi1581.Insert(diskCaddy.PrevDisk());
+			}
+			else if (prevDisk)
+			{
+				pi1581.Insert(diskCaddy.NextDisk());
+			}
+			else if (inputMappings->directDiskSwapRequest != 0)
+			{
+				for (caddyIndex = 0; caddyIndex < numberOfImagesMax; ++caddyIndex)
+				{
+					if (inputMappings->directDiskSwapRequest & (1 << caddyIndex))
+					{
+						DiskImage* diskImage = diskCaddy.SelectImage(caddyIndex);
+						if (diskImage && diskImage != pi1581.GetDiskImage())
+						{
+							pi1581.Insert(diskImage);
+							break;
+						}
+					}
+				}
+				inputMappings->directDiskSwapRequest = 0;
+			}
+		}
+
 	}
 	return exitReason;
 }
@@ -992,6 +1057,7 @@ void emulator()
 
 	m_IEC_Commands.SetAutoBootFB128(options.AutoBootFB128());
 	m_IEC_Commands.Set128BootSectorName(options.Get128BootSectorName());
+	m_IEC_Commands.SetLowercaseBrowseModeFilenames(options.LowercaseBrowseModeFilenames());
 
 	emulating = IEC_COMMANDS;
 
@@ -1006,6 +1072,9 @@ void emulator()
 			IEC_Bus::Reset();
 
 			IEC_Bus::LetSRQBePulledHigh();
+
+			core0RefreshingScreen.Acquire();
+			IEC_Bus::WaitMicroSeconds(100);
 
 // workaround for occasional oled curruption
 			if (screenLCD)
@@ -1022,6 +1091,8 @@ void emulator()
 //				fileBrowser->DisplayRoot(); // Go back to the root folder and display it.
 //			else
 				fileBrowser->RefeshDisplay(); // Just redisplay the current folder.
+
+			core0RefreshingScreen.Release();
 
 //			resetWhileEmulating = false;
 			selectedViaIECCommands = false;
@@ -1112,6 +1183,10 @@ void emulator()
 							GlobalSetDeviceID( m_IEC_Commands.GetDeviceId() );
 							fileBrowser->ShowDeviceAndROM();
 							break;
+						case IEC_Commands::DECIVE_SWITCHED:
+							DEBUG_LOG("DECIVE_SWITCHED\r\n");
+							fileBrowser->DeviceSwitched();
+							break;
 						default:
 							break;
 					}
@@ -1149,8 +1224,6 @@ void emulator()
 			//					if (screenLCD)
 			//						screenLCD->ClearInit(0);
 
-			fileBrowser->ClearSelections();
-			fileBrowser->RefeshDisplay(); // Just redisplay the current folder.
 
 			IEC_Bus::WaitUntilReset();
 			//DEBUG_LOG("6502 resetting\r\n");
@@ -1456,15 +1529,126 @@ void Reboot_Pi()
 	reboot_now();
 }
 
+bool SwitchDrive(const char* drive)
+{
+	FRESULT res;
+
+	res = f_chdrive(drive);
+	DEBUG_LOG("chdrive %s res %d\r\n", drive, res);
+	return res == FR_OK;
+}
+
+void UpdateFirmwareToSD()
+{
+	const char* firmwareName = "kernel.img";
+	DIR dir;
+	FILINFO filInfo;
+	FRESULT res;
+	u32 widthText, heightText;
+	u32 widthScreen = screen.Width();
+	u32 heightScreen = screen.Height();
+	u32 xpos, ypos;
+
+	if (SwitchDrive("USB01:"))
+	{
+		char cwd[1024];
+		if (f_getcwd(cwd, 1024) == FR_OK)
+		{
+			f_chdir("\\");
+
+			bool found = f_findfirst(&dir, &filInfo, ".", firmwareName) == FR_OK;
+
+			if (found)
+			{
+				char* mem = (char*)malloc((u32)filInfo.fsize);
+				if (mem)
+				{
+					FIL fp;
+					u32 bytes;
+					res = f_open(&fp, firmwareName, FA_READ);
+					if (res == FR_OK)
+					{
+						screen.Clear(COLOUR_BLACK);
+						snprintf(tempBuffer, tempBufferSize, "Checking firmware on USB.\r\n");
+						screen.MeasureText(false, tempBuffer, &widthText, &heightText);
+						xpos = (widthScreen - widthText) >> 1;
+						ypos = (heightScreen - heightText) >> 1;
+						screen.PrintText(false, xpos, ypos, tempBuffer, COLOUR_WHITE, COLOUR_RED);
+
+						res = f_read(&fp, mem, (u32)filInfo.fsize, &bytes);
+						f_close(&fp);
+						if ((res == FR_OK) && ((u32)filInfo.fsize == bytes))
+						{
+							if (SwitchDrive("SD:"))
+							{
+								if (f_chdir("\\") == FR_OK)
+								{
+									bool same = true;
+									if (FR_OK == f_open(&fp, firmwareName, FA_READ))
+									{
+										char* ptr = mem;
+										char buffer[256];
+										unsigned bufferIndex = 0;
+										unsigned bytesRead;
+										do
+										{
+											f_read(&fp, buffer, 256, &bytesRead);
+
+											for (unsigned index = 0; index < bytesRead; ++index)
+											{
+												if (buffer[index] != mem[bufferIndex + index])
+												{
+													same = false;
+													break;
+												}
+											}
+											bufferIndex += bytesRead;
+										} while (same && (bufferIndex < (u32)filInfo.fsize));
+										f_close(&fp);
+									}
+
+									screen.Clear(COLOUR_BLACK);
+									if (!same && (FR_OK == f_open(&fp, firmwareName, FA_CREATE_ALWAYS | FA_WRITE)))
+									{
+										snprintf(tempBuffer, tempBufferSize, "Updating firmware.\r\n");
+										screen.MeasureText(false, tempBuffer, &widthText, &heightText);
+										xpos = (widthScreen - widthText) >> 1;
+										ypos = (heightScreen - heightText) >> 1;
+										screen.PrintText(false, xpos, ypos, tempBuffer, COLOUR_WHITE, COLOUR_RED);
+
+										res = f_write(&fp, mem, (u32)filInfo.fsize, &bytes);
+										f_close(&fp);
+									}
+								}
+							}
+						}
+					}
+					else
+					{
+						DEBUG_LOG("failed to open file %s %d\r\n", firmwareName, (int)res);
+					}
+					free(mem);
+				}
+			}
+
+			SwitchDrive("USB01:");
+			f_chdir(cwd);
+		}
+	}
+}
+
 extern "C"
 {
 	void kernel_main(unsigned int r0, unsigned int r1, unsigned int atags)
 	{
-		FATFS fileSystem;
+		FRESULT res;
+		FATFS fileSystemSD;
+		FATFS fileSystemUSB[16];
+
+		m_EMMC.Initialize();
 
 		disk_setEMM(&m_EMMC);
-		m_EMMC.Initialize();
-		f_mount(&fileSystem, "", 1);
+		f_mount(&fileSystemSD, "SD:", 1);
 
 		RPI_AuxMiniUartInit(115200, 8);
 
@@ -1502,7 +1686,13 @@ extern "C"
 
 		USPiInitialize();
 
-		if (!USPiKeyboardAvailable())
+		DEBUG_LOG("\r\n");
+
+		numberOfUSBMassStorageDevices = USPiMassStorageDeviceAvailable();
+		DEBUG_LOG("%d USB Mass Storage Devices found\r\n", numberOfUSBMassStorageDevices);
+
+		USBKeyboardDetected = USPiKeyboardAvailable();
+		if (!USBKeyboardDetected)
 			DEBUG_LOG("Keyboard not found\r\n");
 		else
 			DEBUG_LOG("Keyboard found\r\n");
@@ -1533,6 +1723,19 @@ extern "C"
 			}
 			dmaSoundCB.sourceAddress = dmaSound;
 			//PlaySoundDMA();
+		}
+
+		for (int USBDriveIndex = 0; USBDriveIndex < numberOfUSBMassStorageDevices; ++USBDriveIndex)
+		{
+			char USBDriveId[16];
+			disk_setUSB(USBDriveIndex);
+			sprintf(USBDriveId, "USB%02d:", USBDriveIndex + 1);
+			res = f_mount(&fileSystemUSB[USBDriveIndex], USBDriveId, 1);
+		}
+		if (numberOfUSBMassStorageDevices > 0)
+		{
+			if (SwitchDrive("USB01:"))
+				UpdateFirmwareToSD();
 		}
 
 		f_chdir("/1541");

@@ -73,6 +73,8 @@ public:
 	inline unsigned int AutoBootFB128() const { return autoBootFB128; }
 	inline const char* Get128BootSectorName() const { return C128BootSectorName; }
 
+	inline unsigned int LowercaseBrowseModeFilenames() const { return lowercaseBrowseModeFilenames; }
+	
 	inline unsigned int ScreenWidth() const { return screenWidth; }
 	inline unsigned int ScreenHeight() const { return screenHeight; }
 
@@ -83,6 +85,7 @@ public:
 	inline unsigned int I2CLcdOnContrast() const { return i2cLcdOnContrast; }
 	inline unsigned int I2CLcdDimContrast() const { return i2cLcdDimContrast; }
 	inline unsigned int I2CLcdDimTime() const { return i2cLcdDimTime; }
+	inline unsigned int I2cLcdUseCBMChar() const { return i2cLcdUseCBMChar; }
 	inline LCD_MODEL I2CLcdModel() const { return i2cLcdModel; }
 
 	inline const char* GetLcdLogoName() const { return LcdLogoName; }
@@ -126,6 +129,8 @@ private:
 	unsigned int ignoreReset;
 	unsigned int autoBootFB128;
 
+	unsigned int lowercaseBrowseModeFilenames;
+
 	unsigned int screenWidth;
 	unsigned int screenHeight;
 
@@ -136,6 +141,7 @@ private:
 	unsigned int i2cLcdOnContrast;
 	unsigned int i2cLcdDimContrast;
 	unsigned int i2cLcdDimTime;
+	unsigned int i2cLcdUseCBMChar;
 	LCD_MODEL i2cLcdModel = LCD_UNKNOWN;
 
 	float scrollHighlightRate;

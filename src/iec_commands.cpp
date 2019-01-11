@@ -49,6 +49,9 @@ extern unsigned versionMinor;
 
 extern void Reboot_Pi();
 
+extern void SwitchDrive(const char* drive);
+extern int numberOfUSBMassStorageDevices;
+
 #define WaitWhile(checkStatus) \
 	do\
 	{\
@@ -175,13 +178,15 @@ void Error(u8 errorCode, u8 track = 0, u8 sector = 0)
 	switch (errorCode)
 	{
 		case ERROR_00_OK:
-			msg = "OK";
+			msg = " OK";
 		break;
 		case ERROR_25_WRITE_ERROR:
 			msg = "WRITE ERROR";
 		break;
 		case ERROR_73_DOSVERSION:
-			msg = "PI1541";
+			sprintf(ErrorMessage, "%02d,PI1541 V%02d.%02d,%02d,%02d", errorCode,
+						versionMajor, versionMinor, track, sector);
+			return;
 		break;
 		case ERROR_30_SYNTAX_ERROR:
 		case ERROR_31_SYNTAX_ERROR:
@@ -203,7 +208,7 @@ void Error(u8 errorCode, u8 track = 0, u8 sector = 0)
 			DEBUG_LOG("EC=%d?\r\n", errorCode);
 		break;
 	}
-	sprintf(ErrorMessage, "%02d, %s, %02d, %02d", errorCode, msg, track, sector);
+	sprintf(ErrorMessage, "%02d,%s,%02d,%02d", errorCode, msg, track, sector);
 }
 
 static inline bool IsDirectory(FILINFO& filInfo)
@@ -237,6 +242,8 @@ IEC_Commands::IEC_Commands()
 	Reset();
 	starFileName = 0;
 	C128BootSectorName = 0;
+	displayingDevices = false;
+	lowercaseBrowseModeFilenames = false;
 }
 
 void IEC_Commands::Reset(void)
@@ -445,6 +452,9 @@ IEC_Commands::UpdateAction IEC_Commands::SimulateIECUpdate(void)
 	}
 
 	updateAction = NONE;
+
+	if (selectedImageName[0] != 0) updateAction = IMAGE_SELECTED;
+
 	switch (atnSequence)
 	{
 		case ATN_SEQUENCE_IDLE:
@@ -770,102 +780,129 @@ void IEC_Commands::CD(int partition, char* filename)
 	}
 	else
 	{
-		DIR dir;
-		FILINFO filInfo;
-
-		char path[256] = { 0 };
-		char* pattern = strrchr(filenameEdited, '\\');
-
-		if (pattern)
+		if (displayingDevices)
 		{
-			// Now we look for a folder
-			int len = pattern - filenameEdited;
-			strncpy(path, filenameEdited, len);
-
-			pattern++;
-
-			if ((f_stat(path, &filInfo) != FR_OK) || !IsDirectory(filInfo))
+			if (strncmp(filename, "SD", 2) == 0)
 			{
-				Error(ERROR_62_FILE_NOT_FOUND);
+				SwitchDrive("SD:");
+				displayingDevices = false;
+				updateAction = DECIVE_SWITCHED;
 			}
 			else
 			{
-				char cwd[1024];
-				if (f_getcwd(cwd, 1024) == FR_OK)
+				for (int USBDriveIndex = 0; USBDriveIndex < numberOfUSBMassStorageDevices; ++USBDriveIndex)
 				{
-					f_chdir(path);
+					char USBDriveId[16];
+					sprintf(USBDriveId, "USB%02d:", USBDriveIndex + 1);
 
-					char cwd2[1024];
-					f_getcwd(cwd2, 1024);
-
-					bool found = f_findfirst(&dir, &filInfo, ".", pattern) == FR_OK && filInfo.fname[0] != 0;
-
-					//DEBUG_LOG("%s pattern = %s\r\n", filInfo.fname, pattern);
-
-					if (found)
+					if (strncmp(filename, USBDriveId, 5) == 0)
 					{
-						if (DiskImage::IsDiskImageExtention(filInfo.fname))
-						{
-							if (f_stat(filInfo.fname, &filInfoSelectedImage) == FR_OK)
-							{
-								strcpy((char*)selectedImageName, filInfo.fname);
-							}
-							else
-							{
-								f_chdir(cwd);
-								Error(ERROR_62_FILE_NOT_FOUND);
-							}
-						}
-						else
-						{
-							//DEBUG_LOG("attemting changing dir %s\r\n", filInfo.fname);
-							if (f_chdir(filInfo.fname) != FR_OK)
-							{
-								Error(ERROR_62_FILE_NOT_FOUND);
-								f_chdir(cwd);
-							}
-							else
-							{
-								updateAction = DIR_PUSHED;
-							}
-						}
+						SwitchDrive(USBDriveId);
+						displayingDevices = false;
+						updateAction = DECIVE_SWITCHED;
 					}
-					else
-					{
-						Error(ERROR_62_FILE_NOT_FOUND);
-						f_chdir(cwd);
-					}
-
 				}
-				//if (f_getcwd(cwd, 1024) == FR_OK)
-				//	DEBUG_LOG("CWD on exit = %s\r\n", cwd);
 			}
 		}
 		else
 		{
-			bool found = FindFirst(dir, filenameEdited, filInfo);
+			DIR dir;
+			FILINFO filInfo;
 
-			if (found)
+			char path[256] = { 0 };
+			char* pattern = strrchr(filenameEdited, '\\');
+
+			if (pattern)
 			{
-				if (DiskImage::IsDiskImageExtention(filInfo.fname))
+				// Now we look for a folder
+				int len = pattern - filenameEdited;
+				strncpy(path, filenameEdited, len);
+
+				pattern++;
+
+				if ((f_stat(path, &filInfo) != FR_OK) || !IsDirectory(filInfo))
 				{
-					if (f_stat(filInfo.fname, &filInfoSelectedImage) == FR_OK)
-						strcpy((char*)selectedImageName, filInfo.fname);
-					else
-						Error(ERROR_62_FILE_NOT_FOUND);
+					Error(ERROR_62_FILE_NOT_FOUND);
 				}
 				else
 				{
-					//DEBUG_LOG("attemting changing dir %s\r\n", filInfo.fname);
-					if (f_chdir(filInfo.fname) != FR_OK)
-						Error(ERROR_62_FILE_NOT_FOUND);
-					else
-						updateAction = DIR_PUSHED;
+					char cwd[1024];
+					if (f_getcwd(cwd, 1024) == FR_OK)
+					{
+						f_chdir(path);
+
+						char cwd2[1024];
+						f_getcwd(cwd2, 1024);
+
+						bool found = f_findfirst(&dir, &filInfo, ".", pattern) == FR_OK && filInfo.fname[0] != 0;
+
+						//DEBUG_LOG("%s pattern = %s\r\n", filInfo.fname, pattern);
+
+						if (found)
+						{
+							if (DiskImage::IsDiskImageExtention(filInfo.fname))
+							{
+								if (f_stat(filInfo.fname, &filInfoSelectedImage) == FR_OK)
+								{
+									strcpy((char*)selectedImageName, filInfo.fname);
+								}
+								else
+								{
+									f_chdir(cwd);
+									Error(ERROR_62_FILE_NOT_FOUND);
+								}
+							}
+							else
+							{
+								//DEBUG_LOG("attemting changing dir %s\r\n", filInfo.fname);
+								if (f_chdir(filInfo.fname) != FR_OK)
+								{
+									Error(ERROR_62_FILE_NOT_FOUND);
+									f_chdir(cwd);
+								}
+								else
+								{
+									updateAction = DIR_PUSHED;
+								}
+							}
+						}
+						else
+						{
+							Error(ERROR_62_FILE_NOT_FOUND);
+							f_chdir(cwd);
+						}
+
+					}
+					//if (f_getcwd(cwd, 1024) == FR_OK)
+					//	DEBUG_LOG("CWD on exit = %s\r\n", cwd);
 				}
 			}
 			else
 			{
-				Error(ERROR_62_FILE_NOT_FOUND);
+				bool found = FindFirst(dir, filenameEdited, filInfo);
+
+				if (found)
+				{
+					if (DiskImage::IsDiskImageExtention(filInfo.fname))
+					{
+						if (f_stat(filInfo.fname, &filInfoSelectedImage) == FR_OK)
+							strcpy((char*)selectedImageName, filInfo.fname);
+						else
+							Error(ERROR_62_FILE_NOT_FOUND);
+					}
+					else
+					{
+						//DEBUG_LOG("attemting changing dir %s\r\n", filInfo.fname);
+						if (f_chdir(filInfo.fname) != FR_OK)
+							Error(ERROR_62_FILE_NOT_FOUND);
+						else
+							updateAction = DIR_PUSHED;
+					}
+				}
+				else
+				{
+					Error(ERROR_62_FILE_NOT_FOUND);
+				}
 			}
 		}
 	}
@@ -1040,6 +1077,41 @@ void IEC_Commands::Copy(void)
 		Error(ERROR_34_SYNTAX_ERROR);
 	}
 }
+
+void IEC_Commands::ChangeDevice(void)
+{
+	Channel& channel = channels[15];
+	const char* text = (char*)channel.buffer;
+
+	if (strlen(text) > 2)
+	{
+		int deviceIndex = atoi(text + 2);
+
+		if (deviceIndex == 0)
+		{
+			SwitchDrive("SD:");
+			displayingDevices = false;
+			updateAction = DECIVE_SWITCHED;
+		}
+		else if ((deviceIndex - 1) < numberOfUSBMassStorageDevices)
+		{
+			char USBDriveId[16];
+			sprintf(USBDriveId, "USB%02d:", deviceIndex);
+			SwitchDrive(USBDriveId);
+			displayingDevices = false;
+			updateAction = DECIVE_SWITCHED;
+		}
+		else
+		{
+			Error(ERROR_74_DRlVE_NOT_READY);
+		}
+	}
+	else
+	{
+		Error(ERROR_31_SYNTAX_ERROR);
+	}
+}
+
 void IEC_Commands::Memory(void)
 {
 	Channel& channel = channels[15];
@@ -1286,7 +1358,7 @@ void IEC_Commands::ProcessCommand(void)
 			break;
 			case 'C':
 				if (channel.buffer[1] == 'P')
-					Error(ERROR_31_SYNTAX_ERROR);	// Change Partition not implemented yet
+					ChangeDevice();
 				else
 					Copy();
 			break;
@@ -1414,11 +1486,12 @@ bool IEC_Commands::FindFirst(DIR& dir, const char* matchstr, FILINFO& filInfo)
 	// This basically changes a file name from something like
 	// SOMELONGDISKIMAGENAME.D64 to SOMELONGDISKIMAGENAME*.D64
 	// so the actual SOMELONGDISKIMAGENAMETHATISWAYTOOLONGFORCBMFILEBROWSERTODISPLAY.D64 will be found.
+	bool diskImage = DiskImage::IsDiskImageExtention(matchstr);
 	strcpy(pattern, matchstr);
-	if (strlen(pattern) > 12)
+	if (strlen(pattern) > CBM_NAME_LENGTH_MINUS_D64)
 	{
 		char* ext = strrchr(matchstr, '.');
-		if (ext)
+		if (ext && diskImage)
 		{
 			char* ptr = strrchr(pattern, '.');
 			*ptr++ = '*';
@@ -1473,14 +1546,18 @@ void IEC_Commands::LoadFile()
 
 	if (channel.filInfo.fname[0] != 0)
 	{
+		FSIZE_t size = f_size(&channel.file);
+		FSIZE_t sizeRemaining = size;
 		u32 bytesRead;
 		do
 		{
 			f_read(&channel.file, channel.buffer, sizeof(channel.buffer), &bytesRead);
 			if (bytesRead > 0)
 			{
+				//DEBUG_LOG("%d %d %d\r\n", (int)size, bytesRead, (int)sizeRemaining);
+				sizeRemaining -= bytesRead;
 				channel.cursor = bytesRead;
-				if (SendBuffer(channel, true))
+				if (SendBuffer(channel, sizeRemaining <= 0))
 					return;
 			}
 		}
@@ -1529,6 +1606,14 @@ void IEC_Commands::SendError()
 	while (!finalByte);
 }
 
+u8 IEC_Commands::GetFilenameCharacter(u8 value)
+{
+	if (lowercaseBrowseModeFilenames)
+		value = tolower(value);
+
+	return ascii2petscii(value);
+}
+
 void IEC_Commands::AddDirectoryEntry(Channel& channel, const char* name, u16 blocks, int fileType)
 {
 	u8* data = channel.buffer + channel.cursor;
@@ -1567,20 +1652,20 @@ void IEC_Commands::AddDirectoryEntry(Channel& channel, const char* name, u16 blo
 
 		do
 		{
-			data[index + i++] = ascii2petscii(*name++);
+			data[index + i++] = GetFilenameCharacter(*name++);
 		}
 		while (!(*name == 0x22 || *name == 0 || i == CBM_NAME_LENGTH_MINUS_D64));
 
 		for (int extIndex = 0; extIndex < 4; ++extIndex)
 		{
-			data[index + i++] = ascii2petscii(*extName++);
+			data[index + i++] = GetFilenameCharacter(*extName++);
 		}
 	}
 	else
 	{
 		do
 		{
-			data[index + i++] = ascii2petscii(*name++);
+			data[index + i++] = GetFilenameCharacter(*name++);
 		}
 		while (!(*name == 0x22 || *name == 0 || i == CBM_NAME_LENGTH));
 	}
@@ -1628,19 +1713,26 @@ void IEC_Commands::LoadDirectory()
 	FileBrowser::BrowsableList::Entry entry;
 	std::vector<FileBrowser::BrowsableList::Entry> entries;
 
-	res = f_opendir(&dir, ".");
-	if (res == FR_OK)
+	if (displayingDevices)
 	{
-		do
+		FileBrowser::RefreshDevicesEntries(entries, true);
+	}
+	else
+	{
+		res = f_opendir(&dir, ".");
+		if (res == FR_OK)
 		{
-			res = f_readdir(&dir, &entry.filImage);
-			ext = strrchr(entry.filImage.fname, '.');
-			if (res == FR_OK && entry.filImage.fname[0] != 0 && !(ext && strcasecmp(ext, ".png") == 0))
-				entries.push_back(entry);
-		} while (res == FR_OK && entry.filImage.fname[0] != 0);
-		f_closedir(&dir);
+			do
+			{
+				res = f_readdir(&dir, &entry.filImage);
+				ext = strrchr(entry.filImage.fname, '.');
+				if (res == FR_OK && entry.filImage.fname[0] != 0 && !(ext && strcasecmp(ext, ".png") == 0))
+					entries.push_back(entry);
+			} while (res == FR_OK && entry.filImage.fname[0] != 0);
+			f_closedir(&dir);
 
-		std::sort(entries.begin(), entries.end(), greater());
+			std::sort(entries.begin(), entries.end(), greater());
+		}
 	}
 
 	for (u32 i = 0; i < entries.size(); ++i)

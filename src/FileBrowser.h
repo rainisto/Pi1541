@@ -198,17 +198,21 @@ public:
 
 	static u32 Colour(int index);
 
+	static void RefreshDevicesEntries(std::vector<FileBrowser::BrowsableList::Entry>& entries, bool toLower);
+
 	bool MakeLST(const char* filenameLST);
 	bool SelectLST(const char* filenameLST);
 
 	void SetScrollHighlightRate(float value) { scrollHighlightRate = value; }
+
+	void DeviceSwitched();
 
 private:
 	void DisplayPNG(FILINFO& filIcon, int x, int y);
 	void RefreshFolderEntries();
 
 	void UpdateInputFolders();
-	void UpdateInputDiskCaddy();
+	//void UpdateInputDiskCaddy();
 
 	void UpdateCurrentHighlight();
 
@@ -223,6 +227,9 @@ private:
 	void DisplayPNG();
 
 	bool SelectROMOrDevice(u32 index);
+
+	// returns the volume index if at the root of a volume else -1
+	int IsAtRootOfDevice();
 
 	InputMappings* inputMappings;
 
@@ -247,6 +254,8 @@ private:
 	ScreenBase* screenLCD;
 
 	float scrollHighlightRate;
+
+	bool displayingDevices;
 
 	char PNG[FILEBROWSER_MAX_PNG_SIZE];
 };
