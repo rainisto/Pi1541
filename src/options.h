@@ -20,6 +20,7 @@
 #define OPTIONS_H
 
 #include "types.h"
+#include "DiskImage.h"
 
 class TextParser
 {
@@ -59,10 +60,15 @@ public:
 	inline unsigned int GetSupportUARTInput() const { return supportUARTInput; }
 
 	inline unsigned int GraphIEC() const { return graphIEC; }
+	inline unsigned int DisplayTracks() const { return displayTracks; }
 	inline unsigned int QuickBoot() const { return quickBoot; }
 	inline unsigned int ShowOptions() const { return showOptions; }
 	inline unsigned int DisplayPNGIcons() const { return displayPNGIcons; }
+#if defined(EXPERIMENTALZERO)
+	inline unsigned int SoundOnGPIO() const { return false; }
+#else
 	inline unsigned int SoundOnGPIO() const { return soundOnGPIO; }
+#endif
 	inline unsigned int SoundOnGPIODuration() const { return soundOnGPIODuration; }
 	inline unsigned int SoundOnGPIOFreq() const { return soundOnGPIOFreq; }
 	inline unsigned int SplitIECLines() const { return splitIECLines; }
@@ -73,8 +79,11 @@ public:
 	inline unsigned int AutoBootFB128() const { return autoBootFB128; }
 	inline const char* Get128BootSectorName() const { return C128BootSectorName; }
 
+	inline unsigned int DisplayTemperature() const { return displayTemperature; }
+
 	inline unsigned int LowercaseBrowseModeFilenames() const { return lowercaseBrowseModeFilenames; }
-	
+	DiskImage::DiskType GetNewDiskType() const;
+
 	inline unsigned int ScreenWidth() const { return screenWidth; }
 	inline unsigned int ScreenHeight() const { return screenHeight; }
 
@@ -98,6 +107,9 @@ public:
 	inline unsigned int GetButtonBack() const { return buttonBack - 1; }
 	inline unsigned int GetButtonInsert() const { return buttonInsert - 1; }
 
+	//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+	inline unsigned int RotaryEncoderEnable() const { return rotaryEncoderEnable; }
+
 	// Page up and down will jump a different amount based on the maximum number rows displayed.
 	// Perhaps we should use some keyboard modifier to the the other screen?
 	inline unsigned int KeyboardBrowseLCDScreen() const { return keyboardBrowseLCDScreen; }
@@ -117,6 +129,7 @@ private:
 	unsigned int disableSD2IECCommands;
 	unsigned int supportUARTInput;
 	unsigned int graphIEC;
+	unsigned int displayTracks;
 	unsigned int quickBoot;
 	unsigned int showOptions;
 	unsigned int displayPNGIcons;
@@ -128,6 +141,8 @@ private:
 	unsigned int splitIECLines;
 	unsigned int ignoreReset;
 	unsigned int autoBootFB128;
+
+	unsigned int displayTemperature;
 
 	unsigned int lowercaseBrowseModeFilenames;
 
@@ -171,5 +186,11 @@ private:
 	char ROMNameSlot7[256];
 	char ROMNameSlot8[256];
 	char ROMName1581[256];
+
+	char newDiskType[32];
+
+	//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+	unsigned int rotaryEncoderEnable;
+
 };
 #endif

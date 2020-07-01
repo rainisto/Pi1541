@@ -16,8 +16,11 @@ See www.pi1541.com for SD card and hardware configurations.
 Toolchain Installation
 ----------------------
 
-On Windows use GNU Tools ARM Embedded tool chain 5.4.1 using make.
-https://developer.arm.com/open-source/gnu-toolchain/gnu-rm/downloads/5-2016-q2-update
+On Windows use GNU Tools ARM Embedded tool chain 5.4:
+https://launchpad.net/gcc-arm-embedded/5.0/5-2016-q2-update
+and Make:
+http://gnuwin32.sourceforge.net/packages/make.htm
+
 
 On dpkg based linux systems install:
 (Tested on osmc/rpi3)
@@ -36,3 +39,6 @@ Building
 make
 ```
 This will build kernel.img
+
+
+In order to build the Commodore programs from the `CBM-FileBrowser_v1.6/sources/` directory, you'll need to install the ACME cross assembler, which is available at https://github.com/meonwax/acme/

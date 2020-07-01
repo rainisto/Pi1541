@@ -1,3 +1,4 @@
+
 // Pi1541 - A Commodore 1541 disk drive emulator
 // Copyright(C) 2018 Stephen White
 //
@@ -23,6 +24,7 @@
 extern "C"
 {
 #include "rpi-aux.h"
+extern void usDelay(unsigned nMicroSeconds);
 }
 extern void Reboot_Pi(void);
 
@@ -67,6 +69,7 @@ bool InputMappings::CheckButtonsBrowseMode()
 			SetButtonFlag(FUNCTION_FLAG);
 			inputROMOrDevice = 11;
 		}
+		insertButtonPressedPrev = false;
 	}
 	else if (IEC_Bus::GetInputButtonHeld(INPUT_BUTTON_ENTER))	// Change ROMs
 	{
@@ -90,6 +93,7 @@ bool InputMappings::CheckButtonsBrowseMode()
 			SetButtonFlag(FUNCTION_FLAG);
 			inputROMOrDevice = 4;
 		}
+		enterButtonPressedPrev = false;
 	}
 	else if (IEC_Bus::GetInputButtonRepeating(INPUT_BUTTON_UP))
 		SetButtonFlag(UP_FLAG);
@@ -97,35 +101,59 @@ bool InputMappings::CheckButtonsBrowseMode()
 		SetButtonFlag(DOWN_FLAG);
 	else if (IEC_Bus::GetInputButtonPressed(INPUT_BUTTON_BACK))
 		SetButtonFlag(BACK_FLAG);
+	else
+	{
+		// edge detection
+		insertButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_INSERT);
+		if (insertButtonPressedPrev && !insertButtonPressed)
+			SetButtonFlag(INSERT_FLAG);
+		insertButtonPressedPrev = insertButtonPressed;
 
-// edge detection
-	insertButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_INSERT);
-	if (insertButtonPressedPrev && !insertButtonPressed)
-		SetButtonFlag(INSERT_FLAG);
-	insertButtonPressedPrev = insertButtonPressed;
-
-	enterButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_ENTER);
-	if (enterButtonPressedPrev && !enterButtonPressed)
-		SetButtonFlag(ENTER_FLAG);
-	enterButtonPressedPrev = enterButtonPressed;
+		enterButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_ENTER);
+		if (enterButtonPressedPrev && !enterButtonPressed)
+			SetButtonFlag(ENTER_FLAG);
+		enterButtonPressedPrev = enterButtonPressed;
+	}
 
 	return buttonFlags != 0;
+}
+
+void InputMappings::WaitForClearButtons()
+{
+	buttonFlags = 0;
+
+	do
+	{
+		IEC_Bus::ReadBrowseMode();
+
+		insertButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_INSERT);
+		insertButtonPressedPrev = insertButtonPressed;
+
+		enterButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_ENTER);
+		enterButtonPressedPrev = enterButtonPressed;
+		
+		usDelay(1);
+	} while (insertButtonPressedPrev || enterButtonPressedPrev);
 }
 
 void InputMappings::CheckButtonsEmulationMode()
 {
 	buttonFlags = 0;
 
-	if (IEC_Bus::GetInputButtonPressed(INPUT_BUTTON_ENTER))
-		SetButtonFlag(ESC_FLAG);
-	else if (IEC_Bus::GetInputButtonPressed(INPUT_BUTTON_UP))
+	if (IEC_Bus::GetInputButtonRepeating(INPUT_BUTTON_UP))
 		SetButtonFlag(NEXT_FLAG);
-	else if (IEC_Bus::GetInputButtonPressed(INPUT_BUTTON_DOWN))
+	else if (IEC_Bus::GetInputButtonRepeating(INPUT_BUTTON_DOWN))
 		SetButtonFlag(PREV_FLAG);
 	//else if (IEC_Bus::GetInputButtonPressed(INPUT_BUTTON_BACK))
 	//	SetButtonFlag(BACK_FLAG);
 	//else if (IEC_Bus::GetInputButtonPressed(INPUT_BUTTON_INSERT))
 	//	SetButtonFlag(INSERT_FLAG);
+	else {
+		enterButtonPressed = !IEC_Bus::GetInputButtonReleased(INPUT_BUTTON_ENTER);
+		if (enterButtonPressedPrev && !enterButtonPressed)
+			SetButtonFlag(ESC_FLAG);
+		enterButtonPressedPrev = enterButtonPressed;
+	}
 }
 
 
@@ -194,9 +222,11 @@ void InputMappings::CheckButtonsEmulationMode()
 
 bool InputMappings::CheckKeyboardBrowseMode()
 {
+#if not defined(EXPERIMENTALZERO)
 	Keyboard* keyboard = Keyboard::Instance();
-
+#endif
 	keyboardFlags = 0;
+#if not defined(EXPERIMENTALZERO)
 	keyboardNumLetter = 0;
 	if (!keyboard->CheckChanged())
 	{
@@ -282,12 +312,13 @@ bool InputMappings::CheckKeyboardBrowseMode()
 			}
 		}
 	}
-
+#endif
 	return keyboardFlags != 0;
 }
 
 void InputMappings::CheckKeyboardEmulationMode(unsigned numberOfImages, unsigned numberOfImagesMax)
 {
+#if not defined(EXPERIMENTALZERO)
 	Keyboard* keyboard = Keyboard::Instance();
 
 	keyboardFlags = 0;
@@ -318,5 +349,6 @@ void InputMappings::CheckKeyboardEmulationMode(unsigned numberOfImages, unsigned
 				directDiskSwapRequest |= (1 << index);
 		}
 	}
+#endif
 }
 

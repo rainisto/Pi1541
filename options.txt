@@ -44,6 +44,8 @@ OnResetChangeToStartingFolder = 1
 
 // If you use FB64 (CBMFileBrowser) and want to use a fast loader cartridge (AR6, EFL, FC3) to load it then use this option to automatically mount it. 
 //AutoMountImage = fb.d64 // You MUST have a disk image in \1541 with this filename
+// If you use FB64 (CBMFileBrowser) and want Pi1541 to send all file names as lower case.
+//LowercaseBrowseModeFilenames = 1
 
 // If you are using a FB128 in 128 mode you can get FB128 to auto boot using this option
 //AutoBootFB128 = 1
@@ -60,10 +62,10 @@ GraphIEC = 1
 
 // If you have hardware with a peizo buzzer (the type without a generator) then you can use this option to hear the head step
 //SoundOnGPIO = 1
-//SoundOnGPIODuration = 1000 // Length of buzz in micro seconds
-//SoundOnGPIOFreq = 1200 // Frequency of buzz in Hz
+//SoundOnGPIODuration = 100 // Length of buzz in micro seconds
+//SoundOnGPIOFreq = 200 // Frequency of buzz in Hz
 
-// You can create 320x240 PNG files with the same name as your disk images. With this option turned on they will be displayed on the Pi's screen.
+// You can create 320x200 PNG files with the same name as your disk images. With this option turned on they will be displayed on the Pi's screen.
 //DisplayPNGIcons = 1
 
 // If you would like to specify what file will be loaded by LOAD"*" in browse mode then specify it here
@@ -73,12 +75,15 @@ GraphIEC = 1
 // Names are formed automatically as autoname001.d64, autoname002.d64 etc...
 // change the base of the filename here
 //AutoBaseName = autoname
+// By default Alt-N creates a new D64 disk image.
+// If you rather it create a G64 then use this option.
+//NewDiskType = g64
 
 // If you are using a LCD screen then specify it here
 //LCDName = ssd1306_128x64
 //LCDName = ssd1306_128x32
 //LCDName = sh1106_128x64
-// If you are using a LCD screen and you would like PageUp and PageDown keys to work with it then specify this option
+// If you are using a LCD screen and you would like PageUp and PageDown keys to work with it (rather than the HDMI screen) then specify this option
 //KeyboardBrowseLCDScreen = 1
 
 // change startup logo on oled - 1541ii or 1541classic
@@ -107,3 +112,29 @@ GraphIEC = 1
 //buttonDown = 3
 //buttonBack = 4
 //buttonInsert = 5
+
+//ROTARY:
+//
+// KY-040 Rotary Encoder Support
+//
+//    If you would like to use a KY-040 Rotary Encoder for browse menu up/down
+//    and select, you can enable it here.  Connect as follows:
+//
+//       GPIO 22  -  Menu up       -  Encoder pin A (CLK)
+//       GPIO 23  -  Menu down     -  Encoder pin B (DT)
+//       GPIO 27  -  Enter/Select  -  Encoder pushbutton (SW)
+//
+//    ** Using an encoder is incompatible with the button remapping.  You must
+//       use the default values of Enter=1, Up=2, Down=3, Back=4 and Insert=5.
+//
+//    ** This has only been tested using a Raspberry Pi 3.  Earlier models may
+//       or may not work as expected!
+//
+//    Please see dmRotary.h for full implementation details.
+//
+//RotaryEncoderEnable = 1
+
+// This option will display the temperature of the Pi's CPU.
+// It should be about 52°C anything above 65°C is bad and there is something wrong with your hardware
+//DisplayTemperature = 1
+

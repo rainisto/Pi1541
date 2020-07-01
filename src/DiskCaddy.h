@@ -22,18 +22,28 @@
 #include <vector>
 #include "DiskImage.h"
 #include "Screen.h"
+#include "ROMs.h"
 
 class DiskCaddy
 {
 public:
 	DiskCaddy()
 		: selectedIndex(0)
+#if not defined(EXPERIMENTALZERO)
 		, screen(0)
+#endif
 		, screenLCD(0)
+		, roms(0)
 	{
 	}
-
-	void SetScreen(Screen* screen, ScreenBase* screenLCD) { this->screen = screen; this->screenLCD = screenLCD; }
+	void SetScreen(Screen* screen, ScreenBase* screenLCD, ROMs* roms)
+	{ 
+#if not defined(EXPERIMENTALZERO)
+		this->screen = screen;
+#endif
+		this->screenLCD = screenLCD;
+		this->roms = roms;
+	}
 
 	bool Empty();
 
@@ -41,8 +51,11 @@ public:
 
 	DiskImage* GetCurrentDisk()
 	{
+#if defined(EXPERIMENTALZERO)
+		Update();
+#endif
 		if (selectedIndex < disks.size())
-			return &disks[selectedIndex];
+			return disks[selectedIndex];
 
 		return 0;
 	}
@@ -64,7 +77,7 @@ public:
 	u32 GetNumberOfImages() const { return disks.size(); }
 	u32 GetSelectedIndex() const { return selectedIndex; }
 
-	DiskImage* GetImage(unsigned index) { return &disks[index]; }
+	DiskImage* GetImage(unsigned index) { return disks[index]; }
 	DiskImage* SelectImage(unsigned index)
 	{
 		if (selectedIndex != index && index < disks.size())
@@ -93,15 +106,19 @@ private:
 	bool InsertNIB(const FILINFO* fileInfo, unsigned char* diskImageData, unsigned size, bool readOnly);
 	bool InsertNBZ(const FILINFO* fileInfo, unsigned char* diskImageData, unsigned size, bool readOnly);
 	bool InsertD81(const FILINFO* fileInfo, unsigned char* diskImageData, unsigned size, bool readOnly);
+	bool InsertT64(const FILINFO* fileInfo, unsigned char* diskImageData, unsigned size, bool readOnly);
+	bool InsertPRG(const FILINFO* fileInfo, unsigned char* diskImageData, unsigned size, bool readOnly);
 
 	void ShowSelectedImage(u32 index);
 
-	std::vector<DiskImage> disks;
+	std::vector<DiskImage*> disks;
 	u32 selectedIndex;
 	u32 oldCaddyIndex;
-
+#if not defined(EXPERIMENTALZERO)
 	ScreenBase* screen;
+#endif
 	ScreenBase* screenLCD;
+	ROMs* roms;
 };
 
 #endif

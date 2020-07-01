@@ -25,10 +25,43 @@
 #include <string.h>
 #include <ctype.h>
 #include "lz.h"
+#include "Petscii.h"
+#include <malloc.h>
 extern "C"
 {
 #include "rpi-gpio.h"
 }
+
+extern u32 HashBuffer(const void* pBuffer, u32 length);
+
+#define MAX_DIRECTORY_SECTORS 18
+#define DIRECTORY_SIZE 32
+#define DISK_SECTOR_OFFSET_FIRST_DIRECTORY_SECTOR 357
+#define DISKNAME_OFFSET_IN_DIR_BLOCK 144
+#define DISKID_OFFSET_IN_DIR_BLOCK 162
+
+#define DIRECTRY_ENTRY_FILE_TYPE_PRG 0x82
+
+static u8 blankD64DIRBAM[] =
+{
+	0x12, 0x01, 0x41, 0x00, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f,
+	0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f,
+	0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f,
+	0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f,
+	0x15, 0xff, 0xff, 0x1f, 0x15, 0xff, 0xff, 0x1f, 0x11, 0xfc, 0xff, 0x07, 0x13, 0xff, 0xff, 0x07,
+	0x13, 0xff, 0xff, 0x07, 0x13, 0xff, 0xff, 0x07, 0x13, 0xff, 0xff, 0x07, 0x13, 0xff, 0xff, 0x07,
+	0x13, 0xff, 0xff, 0x07, 0x12, 0xff, 0xff, 0x03, 0x12, 0xff, 0xff, 0x03, 0x12, 0xff, 0xff, 0x03,
+	0x12, 0xff, 0xff, 0x03, 0x12, 0xff, 0xff, 0x03, 0x12, 0xff, 0xff, 0x03, 0x11, 0xff, 0xff, 0x01,
+	0x11, 0xff, 0xff, 0x01, 0x11, 0xff, 0xff, 0x01, 0x11, 0xff, 0xff, 0x01, 0x11, 0xff, 0xff, 0x01,
+	0x42, 0x4c, 0x41, 0x4e, 0x4b, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
+	0xa0, 0xa0, 0x31, 0x41, 0xa0, 0x32, 0x41, 0xa0, 0xa0, 0xa0, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	//	0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
 unsigned char DiskImage::readBuffer[READBUFFER_SIZE];
 
@@ -138,17 +171,28 @@ void DiskImage::Close()
 			CloseD81();
 			memset(tracksD81, 0, sizeof(tracksD81));
 		break;
+		case T64:
+			CloseT64();
+			memset(tracks, 0x55, sizeof(tracks));
+		break;
 		default:
+			memset(tracks, 0x55, sizeof(tracks));
 		break;
 	}
 	memset(trackLengths, 0, sizeof(trackLengths));
 	diskType = NONE;
 	fileInfo = 0;
+	hash = 0;
 }
 
 void DiskImage::DumpTrack(unsigned track)
 {
+
+#if defined(EXPERIMENTALZERO)
+	unsigned char* src = &tracks[track << 13];
+#else
 	unsigned char* src = tracks[track];
+#endif
 	unsigned trackLength = trackLengths[track];
 	DEBUG_LOG("track = %d trackLength = %d\r\n", track, trackLength);
 	for (unsigned index = 0; index < trackLength; ++index)
@@ -159,6 +203,11 @@ void DiskImage::DumpTrack(unsigned track)
 
 bool DiskImage::OpenD64(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size)
 {
+	unsigned char errorinfo[MAXBLOCKSONDISK];
+	unsigned last_track = MAXBLOCKSONDISK;
+	unsigned sector_ref;
+	unsigned char error;
+
 	Close();
 
 	this->fileInfo = fileInfo;
@@ -170,10 +219,38 @@ bool DiskImage::OpenD64(const FILINFO* fileInfo, unsigned char* diskImage, unsig
 
 	attachedImageSize = size;
 
-	for (unsigned halfTrackIndex = 0; halfTrackIndex < HALF_TRACK_COUNT; ++halfTrackIndex)
+	memset(errorinfo, SECTOR_OK, sizeof(errorinfo));
+
+	switch (size)
+	{
+		case (BLOCKSONDISK * 257):		// 35 track image with errorinfo
+			memcpy(errorinfo, diskImage + (BLOCKSONDISK * 256), BLOCKSONDISK);
+			/* FALLTHROUGH */
+		case (BLOCKSONDISK * 256):		// 35 track image w/o errorinfo
+			last_track = 35;
+			break;
+
+		case (MAXBLOCKSONDISK * 257):	// 40 track image with errorinfo
+			memcpy(errorinfo, diskImage + (MAXBLOCKSONDISK * 256), MAXBLOCKSONDISK);
+			/* FALLTHROUGH */
+		case (MAXBLOCKSONDISK * 256):	// 40 track image w/o errorinfo
+			last_track = 40;
+			break;
+
+		default:  // non-standard images, attempt to load anyway
+			last_track = 40;
+			break;
+	}
+
+	sector_ref = 0;
+	for (unsigned halfTrackIndex = 0; halfTrackIndex < last_track * 2; ++halfTrackIndex)
 	{
 		unsigned char track = (halfTrackIndex >> 1);
+#if defined(EXPERIMENTALZERO)
+		unsigned char* dest = &tracks[halfTrackIndex << 13];
+#else
 		unsigned char* dest = tracks[halfTrackIndex];
+#endif
 
 		trackLengths[halfTrackIndex] = SectorsPerTrack[track] * GCR_SECTOR_LENGTH;
 
@@ -185,7 +262,9 @@ bool DiskImage::OpenD64(const FILINFO* fileInfo, unsigned char* diskImage, unsig
 				//DEBUG_LOG("Track %d used\r\n", halfTrackIndex);
 				for (unsigned sectorNo = 0; sectorNo < SectorsPerTrack[track]; ++sectorNo)
 				{
-					convert_sector_to_GCR(diskImage + offset, dest, track + 1, sectorNo, diskImage + 0x165A2, 0);
+					error = errorinfo[sector_ref++];
+
+					convert_sector_to_GCR(diskImage + offset, dest, track + 1, sectorNo, diskImage + 0x165A2, error);
 					dest += 361;
 
 					offset += SECTOR_LENGTH;
@@ -208,13 +287,13 @@ bool DiskImage::OpenD64(const FILINFO* fileInfo, unsigned char* diskImage, unsig
 	return true;
 }
 
-bool DiskImage::WriteD64()
+bool DiskImage::WriteD64(char* name)
 {
 	if (readOnly)
 		return true;
 
 	FIL fp;
-	FRESULT res = f_open(&fp, fileInfo->fname, FA_CREATE_ALWAYS | FA_WRITE);
+	FRESULT res = f_open(&fp, fileInfo ? fileInfo->fname : name, FA_CREATE_ALWAYS | FA_WRITE);
 	if (res == FR_OK)
 	{
 		u32 bytesToWrite;
@@ -731,7 +810,9 @@ bool DiskImage::OpenG64(const FILINFO* fileInfo, unsigned char* diskImage, unsig
 
 	if (memcmp(diskImage, "GCR-1541", 8) == 0)
 	{
-		//DEBUG_LOG("Is G64\r\n");
+		hash = HashBuffer(diskImage, size);
+
+		//DEBUG_LOG("Is G64 %08x\r\n", hash);
 
 		unsigned char numTracks = diskImage[9];
 		//DEBUG_LOG("numTracks = %d\r\n", numTracks);
@@ -764,7 +845,11 @@ bool DiskImage::OpenG64(const FILINFO* fileInfo, unsigned char* diskImage, unsig
 				//DEBUG_LOG("trackLength = %d offset = %d\r\n", trackLength, offset);
 				trackData += 2;
 				trackLengths[track] = trackLength;
+#if defined(EXPERIMENTALZERO)
+				memcpy(&tracks[track << 13], trackData, trackLength);
+#else
 				memcpy(tracks[track], trackData, trackLength);
+#endif
 				trackUsed[track] = true;
 				//DEBUG_LOG("%d has data\r\n", track);
 			}
@@ -790,13 +875,13 @@ static bool WriteDwords(FIL* fp, u32* values, u32 amount)
 	return true;
 }
 
-bool DiskImage::WriteG64()
+bool DiskImage::WriteG64(char* name)
 {
 	if (readOnly)
 		return true;
 
 	FIL fp;
-	FRESULT res = f_open(&fp, fileInfo->fname, FA_CREATE_ALWAYS | FA_WRITE);
+	FRESULT res = f_open(&fp, fileInfo ? fileInfo->fname : name, FA_CREATE_ALWAYS | FA_WRITE);
 	if (res == FR_OK)
 	{
 		u32 bytesToWrite;
@@ -863,7 +948,11 @@ bool DiskImage::WriteG64()
 
 			gcr_track[0] = (BYTE)(track_len % 256);
 			gcr_track[1] = (BYTE)(track_len / 256);
+#if defined(EXPERIMENTALZERO)
+			memcpy(buffer, &tracks[track << 13], track_len);
+#else
 			memcpy(buffer, tracks[track], track_len);
+#endif
 
 			memcpy(gcr_track + 2, buffer, track_len);
 			bytesToWrite = G64_TRACK_MAXLEN + 2;
@@ -929,11 +1018,19 @@ bool DiskImage::OpenNIB(const FILINFO* fileInfo, unsigned char* diskImage, unsig
 
 			unsigned char* nibdata = diskImage + (t_index * NIB_TRACK_LENGTH) + 0x100;
 			int align;
+#if defined(EXPERIMENTALZERO)
+			trackLengths[track] = extract_GCR_track(&tracks[track << 13], nibdata, &align
+				//, ALIGN_GAP
+				, ALIGN_NONE
+				, capacity_min[trackDensity[track]],
+				capacity_max[trackDensity[track]]);
+#else
 			trackLengths[track] = extract_GCR_track(tracks[track], nibdata, &align
 				//, ALIGN_GAP
 				, ALIGN_NONE
 				, capacity_min[trackDensity[track]],
 				capacity_max[trackDensity[track]]);
+#endif
 
 			trackUsed[track] = true;
 
@@ -995,7 +1092,11 @@ bool DiskImage::WriteNIB()
 			{
 				if (trackUsed[track])
 				{
+#if defined(EXPERIMENTALZERO)
+					if (f_write(&fp, &tracks[track << 13], bytesToWrite, &bytesWritten) != FR_OK || bytesToWrite != bytesWritten)
+#else
 					if (f_write(&fp, tracks[track], bytesToWrite, &bytesWritten) != FR_OK || bytesToWrite != bytesWritten)
+#endif
 					{
 						DEBUG_LOG("Cannot write track data.\r\n");
 					}
@@ -1099,6 +1200,136 @@ void DiskImage::CloseNBZ()
 	attachedImageSize = 0;
 }
 
+bool DiskImage::OpenT64(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size)
+{
+	bool success = false;
+
+	Close();
+
+	this->fileInfo = fileInfo;
+
+	attachedImageSize = size;
+
+	if ((memcmp(diskImage, "C64 tape image file", 20) == 0) || (memcmp(diskImage, "C64s tape image file", 21) == 0))
+	{
+		u16 version = diskImage[0x20] | (diskImage[0x21] << 8);
+		u16 entries = diskImage[0x22] | (diskImage[0x23] << 8);
+		u16 entriesUsed = diskImage[0x24] | (diskImage[0x25] << 8);
+		char name[25] = { 0 };
+		for (int i = 0; i < 24; ++i)
+		{
+			name[i] = tolower(diskImage[i + 0x28]);
+		}
+
+		unsigned char* newDiskImage = (unsigned char*)malloc(READBUFFER_SIZE);
+
+		if (newDiskImage)
+		{
+			unsigned length = DiskImage::CreateNewDiskInRAM(name, "00", newDiskImage);
+
+			if (length)
+			{
+
+				u16 entryIndex;
+
+				for (entryIndex = 0; entryIndex < entriesUsed; ++entryIndex)
+				{
+					char nameEntry[17] = { 0 };
+					int offset = 0x40 + entryIndex * 32;
+					u8 type = diskImage[offset];
+					u8 fileType = diskImage[offset + 1];
+					if (fileType == DIRECTRY_ENTRY_FILE_TYPE_PRG)
+					{
+						u16 startAddress = diskImage[offset + 2] | (diskImage[offset + 3] << 8);
+						u16 endAddress = diskImage[offset + 4] | (diskImage[offset + 5] << 8);
+						unsigned length = endAddress - startAddress;
+
+						u32 fileOffset = diskImage[offset + 8] | (diskImage[offset + 9] << 8) | (diskImage[offset + 10] << 16) | (diskImage[offset + 11] << 24);
+						strncpy(nameEntry, (const char*)(diskImage + offset + 0x10), 16);
+
+						unsigned char* data = (unsigned char*)malloc(length + 2);
+
+						if (data)
+						{
+							data[0] = startAddress & 0xff;
+							data[1] = (startAddress >> 8) & 0xff;
+
+							memcpy(data + 2, diskImage + fileOffset, length);
+							length += 2;
+							bool addFileSuccess = AddFileToRAMD64(newDiskImage, nameEntry, data, length);
+
+							free(data);
+						}
+					}
+
+				}
+
+				if (OpenD64(fileInfo, newDiskImage, length))
+				{
+					success = true;
+					diskType = T64;
+				}
+			}
+
+			free(newDiskImage);
+		}
+	}
+
+	return success;
+}
+
+bool DiskImage::WriteT64(char* name)
+{
+	if (readOnly)
+		return true;
+
+	return true;
+}
+
+void DiskImage::CloseT64()
+{
+	if (dirty)
+	{
+		WriteT64();
+		dirty = false;
+	}
+	attachedImageSize = 0;
+}
+
+bool DiskImage::OpenPRG(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size)
+{
+	bool success = false;
+
+	Close();
+
+	this->fileInfo = fileInfo;
+
+	attachedImageSize = size;
+
+	unsigned char* newDiskImage = (unsigned char*)malloc(READBUFFER_SIZE);
+
+	if (newDiskImage)
+	{
+		unsigned length = DiskImage::CreateNewDiskInRAM(fileInfo->fname, "00", newDiskImage);
+
+		if (length)
+		{
+			bool addFileSuccess = AddFileToRAMD64(newDiskImage, fileInfo->fname, diskImage, size);
+
+			if (addFileSuccess && OpenD64(fileInfo, newDiskImage, length))
+			{
+				success = true;
+				DEBUG_LOG("Success\r\n");
+				diskType = PRG;
+			}
+		}
+
+		free(newDiskImage);
+	}
+
+	return success;
+}
+
 bool DiskImage::GetDecodedSector(u32 track, u32 sector, u8* buffer)
 {
 	if (track > 0)
@@ -1125,10 +1356,14 @@ DiskImage::DiskType DiskImage::GetDiskImageTypeViaExtention(const char* diskImag
 			return NBZ;
 		else if (toupper((char)ext[1]) == 'D' && ext[2] == '6' && ext[3] == '4')
 			return D64;
-		else if (toupper((char)ext[1]) == 'L' && toupper((char)ext[2]) == 'S' && toupper((char)ext[3]) == 'T')
+		else if (toupper((char)ext[1]) == 'T' && ext[2] == '6' && ext[3] == '4')
+			return T64;
+		else if (IsLSTExtention(diskImageName))
 			return LST;
 		else if (toupper((char)ext[1]) == 'D' && ext[2] == '8' && ext[3] == '1')
 			return D81;
+		else if (toupper((char)ext[1]) == 'P' && toupper((char)ext[2]) == 'R' && toupper((char)ext[3]) == 'G')
+			return PRG;
 	}
 	return NONE;
 }
@@ -1166,7 +1401,14 @@ bool DiskImage::IsLSTExtention(const char* diskImageName)
 {
 	char* ext = strrchr((char*)diskImageName, '.');
 
-	if (ext && toupper((char)ext[1]) == 'L' && toupper((char)ext[2]) == 'S' && toupper((char)ext[3]) == 'T')
+	if (ext && 
+			(
+				(toupper((char)ext[1]) == 'L' && toupper((char)ext[2]) == 'S' && toupper((char)ext[3]) == 'T')
+				||
+				(toupper((char)ext[1]) == 'V' && toupper((char)ext[2]) == 'F' && toupper((char)ext[3]) == 'L')
+			)
+		)
+
 		return true;
 	return false;
 }
@@ -1207,10 +1449,18 @@ void DiskImage::DecodeBlock(unsigned track, int bitIndex, unsigned char* buf, in
 	unsigned char gcr[5];
 	unsigned char byte;
 	unsigned char* offset;
+#if defined(EXPERIMENTALZERO)
+	unsigned char* end = &tracks[track << 13] + trackLengths[track];
+#else
 	unsigned char* end = tracks[track] + trackLengths[track];
+#endif
 
 	shift = bitIndex & 7;
+#if defined(EXPERIMENTALZERO)
+	offset = &tracks[track << 13] + (bitIndex >> 3);
+#else
 	offset = tracks[track] + (bitIndex >> 3);
+#endif
 
 	byte = offset[0] << shift;
 	for (i = 0; i < num; i++, buf += 4)
@@ -1219,7 +1469,11 @@ void DiskImage::DecodeBlock(unsigned track, int bitIndex, unsigned char* buf, in
 		{
 			offset++;
 			if (offset >= end)
+#if defined(EXPERIMENTALZERO)
+				offset = &tracks[track << 13];
+#else
 				offset = tracks[track];
+#endif
 		
 			if (shift)
 			{
@@ -1239,7 +1493,11 @@ void DiskImage::DecodeBlock(unsigned track, int bitIndex, unsigned char* buf, in
 int DiskImage::FindSync(unsigned track, int bitIndex, int maxBits, int* syncStartIndex)
 {
 	int readShiftRegister = 0;
+#if defined(EXPERIMENTALZERO)
+	unsigned char byte = tracks[(track << 13) + (bitIndex >> 3)] << (bitIndex & 7);
+#else
 	unsigned char byte = tracks[track][bitIndex >> 3] << (bitIndex & 7);
+#endif
 	bool prevBitZero = true;
 
 	while (maxBits--)
@@ -1271,7 +1529,11 @@ int DiskImage::FindSync(unsigned track, int bitIndex, int maxBits, int* syncStar
 			bitIndex++;
 			if (bitIndex >= MAX_TRACK_LENGTH * 8)
 				bitIndex = 0;
+#if defined(EXPERIMENTALZERO)
+			byte = tracks[(track << 13)+(bitIndex >> 3)];
+#else
 			byte = tracks[track][bitIndex >> 3];
+#endif
 		}
 	}
 	return -1;
@@ -1325,4 +1587,361 @@ unsigned DiskImage::LastTrackUsed()
 			lastTrackUsed = i;
 	}
 	return lastTrackUsed;
+}
+
+unsigned DiskImage::CreateNewDiskInRAM(const char* filenameNew, const char* ID, unsigned char* destBuffer)
+{
+	unsigned char* dest;
+	unsigned char* ptr;
+	int i;
+
+	DEBUG_LOG("CreateNewDiskInRAM %s\r\n", filenameNew);
+
+	unsigned char buffer[256];
+	u32 bytes;
+	u32 blocks;
+
+	if (destBuffer == 0)
+		destBuffer = DiskImage::readBuffer;
+
+	dest = destBuffer;
+
+	memset(buffer, 0, sizeof(buffer));
+
+	for (blocks = 0; blocks < DISK_SECTOR_OFFSET_FIRST_DIRECTORY_SECTOR; ++blocks)
+	{
+		for (i = 0; i < 256; ++i)
+		{
+			*dest++ = buffer[i];
+		}
+	}
+	ptr = (unsigned char*)&blankD64DIRBAM[DISKNAME_OFFSET_IN_DIR_BLOCK];
+	int len = strlen(filenameNew);
+	for (i = 0; i < len; ++i)
+	{
+		*ptr++ = ascii2petscii(filenameNew[i]);
+	}
+	for (; i < 18; ++i)
+	{
+		*ptr++ = 0xa0;
+	}
+	for (i = 0; i < 2; ++i)
+	{
+		*ptr++ = ascii2petscii(ID[i]);
+	}
+	for (i = 0; i < 256; ++i)
+	{
+		*dest++ = blankD64DIRBAM[i];
+	}
+	buffer[1] = 0xff;
+	for (i = 0; i < 256; ++i)
+	{
+		*dest++ = buffer[i];
+	}
+	buffer[1] = 0;
+	for (blocks = 0; blocks < 324; ++blocks)
+	{
+		for (i = 0; i < 256; ++i)
+		{
+			*dest++ = buffer[i];
+		}
+	}
+
+	return (unsigned)(dest - destBuffer);
+}
+
+int DiskImage::RAMD64GetSectorOffset(int track, int sector)
+{
+	int index;
+	int sectorOffset = 0;
+
+	for (index = 0; index < (track - 1); ++index)
+	{
+		sectorOffset += SectorsPerTrack[index];
+	}
+	sectorOffset += sector;
+	return sectorOffset;
+}
+
+unsigned char* DiskImage::RAMD64AddDirectoryEntry(unsigned char* ramD64, const char* name, const unsigned char* data, unsigned length)
+{
+	unsigned char* ptrTrackSector = 0;
+	unsigned char* ptr;
+	int directorySector;
+	int track = 18;
+	int i;
+	int numberOfBlocks = length / (256 - 2) + ((length % (256 - 2)) ? 1 : 0);
+
+	int sectorOffset = RAMD64GetSectorOffset(18, 0);
+	ptr = ramD64 + sectorOffset * 256;
+
+	track = ptr[0];
+
+	for (directorySector = 1; directorySector < 19; ++directorySector)
+	{
+		int entryIndex;
+		bool found = false;
+
+		sectorOffset = RAMD64GetSectorOffset(track, directorySector);
+
+		DEBUG_LOG("directory sector offset = %d\r\n", sectorOffset);
+		ptr = ramD64 + sectorOffset * 256;
+
+		entryIndex = 0;
+		while (!found && entryIndex < 8)
+		{
+			unsigned char* ptrEntry = ptr + 2 + entryIndex * DIRECTORY_SIZE;
+
+			if (*ptrEntry == 0)
+			{
+				*ptrEntry++ = DIRECTRY_ENTRY_FILE_TYPE_PRG;
+
+				ptrTrackSector = ptrEntry;
+
+				ptrEntry++; // track data start
+				ptrEntry++; // sector data start
+
+				int len = strlen(name);
+				len = Min(len, 16);
+
+				for (i = 0; i < len; ++i)
+				{
+					*ptrEntry++ = ascii2petscii(tolower(name[i]));
+				}
+				for (; i < 16; ++i)
+				{
+					*ptrEntry++ = 0xa0;
+				}
+
+				ptrEntry++;	// track and sector of the first side sector block
+				ptrEntry++;
+
+				ptrEntry++;	// record length
+
+				ptrEntry++;	// not used
+				ptrEntry++;
+				ptrEntry++;
+				ptrEntry++;
+
+				ptrEntry++;	// Track and sector of the new file when overwrtiting with the at sign
+				ptrEntry++;
+				
+				*ptrEntry++ = (unsigned char)(numberOfBlocks & 0xff);
+				*ptrEntry++ = (unsigned char)(numberOfBlocks >> 8);
+				ptrEntry++;	// not used
+				ptrEntry++;
+				found = true;
+			}
+			else
+			{
+				++entryIndex;
+			}
+		}
+
+		if (entryIndex < 8)
+		{
+			ptr[0] = 0;
+			ptr[1] = 0xff;
+
+			if (directorySector > 1)
+			{
+				unsigned char* ptrPrevSector = ramD64 + RAMD64GetSectorOffset(track, directorySector - 1) * 256;
+				
+				ptrPrevSector[0] = track;
+				ptrPrevSector[1] = directorySector - 1;
+				// Allocate directory sector in the BAM
+				RAMD64AllocateSector(ramD64, track, directorySector);
+			}
+			break;
+		}
+	}
+
+	return ptrTrackSector;
+}
+
+int DiskImage::RAMD64FreeSectors(unsigned char* ramD64)
+{
+	int freeSectors = 0;
+	unsigned char* ptr;
+	int sectorOffset = RAMD64GetSectorOffset(18, 0);
+
+	DEBUG_LOG("sectorOffset bam = %d\r\n", sectorOffset);
+
+	ptr = ramD64 + sectorOffset * 256;
+
+	ptr += 4;
+
+	int trackIndex;
+	for (trackIndex = 0; trackIndex < 35; ++trackIndex)
+	{
+		freeSectors += *ptr;
+		ptr += 4;
+	}
+	return freeSectors;
+}
+
+bool DiskImage::RAMD64AllocateSector(unsigned char* ramD64, int track, int sector)
+{
+	int sectorOffset = RAMD64GetSectorOffset(18, 0);
+	unsigned bits;
+	unsigned char* ptr = 4 + ramD64 + sectorOffset * 256 + 4 * (track - 1);
+	unsigned bitMap = 1 << sector;
+	bits = ptr[1];
+	bits |= ptr[2] << 8;
+	bits |= ptr[3] << 16;
+	if (bits & bitMap)
+	{
+		ptr[0]--;
+		bits &= ~bitMap;
+		ptr[1] = (unsigned char)(bits & 0xff);
+		ptr[2] = (unsigned char)((bits >> 8) & 0xff);
+		ptr[3] = (unsigned char)((bits >> 16) & 0xff);
+		return true;
+	}
+	return false;
+}
+
+bool DiskImage::RAMD64FindFreeSector(bool searchForwards, unsigned char* ramD64, int lastTrackUsed, int lastSectorUsed, int& track, int& sector)
+{
+	unsigned char* ptr;
+	int sectorOffset = RAMD64GetSectorOffset(18, 0);
+	int trackIndex;
+	int sectorIndex;
+	int stripAmount = 10;
+
+	track = 0;
+	sector = -1;
+	if (searchForwards)
+	{
+		if (lastTrackUsed == -1)
+			trackIndex = 18;
+		else
+			trackIndex = lastTrackUsed - 1;
+
+		for (; trackIndex < 35; ++trackIndex)
+		{
+			if (lastTrackUsed != (trackIndex + 1))
+			{
+				lastSectorUsed = 0;
+				stripAmount = 0;
+			}
+			if (lastSectorUsed < 0)
+			{
+				lastSectorUsed = 0;
+				stripAmount = 0;
+			}
+			ptr = 4 + ramD64 + sectorOffset * 256 + 4 * trackIndex;
+			if (*ptr != 0)
+			{
+				for (sectorIndex = 0; sectorIndex < SectorsPerTrack[trackIndex]; ++sectorIndex)
+				{
+					int sectorStripped = (sectorIndex + lastSectorUsed + stripAmount) % SectorsPerTrack[trackIndex];
+					if (RAMD64AllocateSector(ramD64, trackIndex + 1, sectorStripped))
+					{
+						track = trackIndex + 1;
+						sector = sectorStripped;
+						return true;
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		if (lastTrackUsed == -1)
+			trackIndex = 16;
+		else
+			trackIndex = lastTrackUsed - 1;
+		for (; trackIndex >= 0; --trackIndex)
+		{
+			if (lastTrackUsed != (trackIndex + 1))
+			{
+				lastSectorUsed = 0;
+				stripAmount = 0;
+			}
+			if (lastSectorUsed < 0)
+			{
+				lastSectorUsed = 0;
+				stripAmount = 0;
+			}
+
+			ptr = 4 + ramD64 + sectorOffset * 256 + 4 * trackIndex;
+			if (*ptr != 0)
+			{
+				for (sectorIndex = 0; sectorIndex < SectorsPerTrack[trackIndex]; ++sectorIndex)
+				{
+					int sectorStripped = (sectorIndex + lastSectorUsed + stripAmount) % SectorsPerTrack[trackIndex];
+					if (RAMD64AllocateSector(ramD64, trackIndex + 1, sectorStripped))
+					{
+
+
+						track = trackIndex + 1;
+						sector = sectorStripped;
+
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
+bool DiskImage::AddFileToRAMD64(unsigned char* ramD64, const char* name, const unsigned char* data, unsigned length)
+{
+	int numberOfSectorsRequired = length / (256 - 2) + ((length % (256 - 2)) ? 1 : 0);
+	int freeSectors = RAMD64FreeSectors(ramD64);
+	int bytesRemaining = length;
+	bool success = false;
+	int lastTrackUsed = -1;
+	int lastSectorUsed = -1;
+
+	if (freeSectors >= numberOfSectorsRequired)
+	{
+		unsigned char* ptrTrackSector = RAMD64AddDirectoryEntry(ramD64, name, data, length);
+		if (ptrTrackSector)
+		{
+			int blocks;
+
+			success = true;
+
+			for (blocks = 0; blocks < numberOfSectorsRequired; ++blocks)
+			{
+				int track;
+				int sector;
+
+				bool found = RAMD64FindFreeSector(true, ramD64, lastTrackUsed, lastSectorUsed, track, sector);
+				if (!found)
+				{
+					if (lastTrackUsed >= 18)
+						lastTrackUsed = -1;
+					found = RAMD64FindFreeSector(false, ramD64, lastTrackUsed, lastSectorUsed, track, sector);
+				}
+				if (found)
+				{
+					lastTrackUsed = track;
+					lastSectorUsed = sector;
+					ptrTrackSector[0] = track;
+					ptrTrackSector[1] = sector;
+					ptrTrackSector = ramD64 + RAMD64GetSectorOffset(track, sector) * 256;
+
+					int bytesToCopy = (256 - 2);
+
+					if (bytesRemaining < (256 - 2))
+					{
+						bytesToCopy = bytesRemaining + 1;
+						ptrTrackSector[0] = 0;
+						ptrTrackSector[1] = bytesToCopy;
+					}
+
+					bytesRemaining -= bytesToCopy;
+
+					memcpy(ptrTrackSector + 2, data, bytesToCopy);
+				}
+				data += (256 - 2);
+			}
+		}
+	}
+
+	return success;
 }

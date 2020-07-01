@@ -19,12 +19,16 @@
 #ifndef IEC_BUS_H
 #define IEC_BUS_H
 
+#include "defs.h"
 #include "debug.h"
 #include "m6522.h"
 #include "m8520.h"
 
 #include "rpi-gpio.h"
 #include "rpiHardware.h"
+
+//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+#include "dmRotary.h"
 
 #define INPUT_BUTTON_DEBOUNCE_THRESHOLD 20000
 #define INPUT_BUTTON_REPEAT_THRESHOLD 460000
@@ -71,7 +75,7 @@
 // SRQ is a little bit different.
 // The 1581 does not pull it high. Only the 128 pulls it high.
 // 
-
+#if defined(HAS_40PINS)
 enum PIGPIO
 {
 	// Original Non-split lines
@@ -113,6 +117,55 @@ enum PIGPIO
 	PIGPIO_IN_CLOCK = 26,	// 37
 	PIGPIO_IN_BUTTON1 = 27	// 13 Common
 };
+#else
+//Added GPIO bindings for Raspberry 1B (only 26 I/O ports)
+enum PIGPIO
+{
+	// Original Non-split lines
+	PIGPIO_ATN = 2,			// 3
+	PIGPIO_DATA = 18,		// 12
+	PIGPIO_CLOCK = 17,		// 11
+	PIGPIO_SRQ = 19,		// 35  not connected yet
+	PIGPIO_RESET = 3,		// 5
+
+
+	// Pinout for those that want to split the lines (and the common ones like buttons, sound and LED)
+	// Funktion = 	GPIO	// Hardware PIN
+	// 0 IDSC				// 28
+	// 1 IDSD				// 27
+	// 2 I2C_SDA			// 3
+	// 3 I2C_CLK			// 5
+	PIGPIO_IN_BUTTON4 = 4,	// 07 Common
+	//GPIO = 5,				// 29 Common
+	//PIGPIO_OUT_RESET = 6,	// 31
+	PIGPIO_OUT_SPI0_RS = 6,	// 31 not connected yet
+	// 7 SPI0_CS1			// 26
+	PIGPIO_IN_BUTTON5 =  8,	// 24 changed for Raspberry 1 A.Buch 02.Jan.2020
+	PIGPIO_IN_RESET = 9,	// 21 changed for Raspberry 1 A.Buch 02.Jan.2020
+	PIGPIO_IN_CLOCK = 10,	// 19 changed for Raspberry 1 A.Buch 02.Jan.2020
+	PIGPIO_OUT_LED = 11,	// 23 changed for Raspberry 1 A.Buch 02.Jan.2020
+	PIGPIO_OUT_ATN = 12,	// 32 not connected yet
+	PIGPIO_OUT_SOUND = 13,  // 33 GPIO 13 is not connected at all with Raspberry 1 Layout
+	// 14 TX				// 8
+	// 15 RX  				// 10
+	//GPIO = 16,			// 36 Common
+	PIGPIO_OUT_CLOCK = 17,	// 11
+	PIGPIO_OUT_DATA = 18,	// 12
+	PIGPIO_OUT_SRQ = 19,	// 35 not connected yet
+	//GPIO 20,				// 38
+	PIGPIO_IN_SRQ = 21,		// 40 not connected yet
+	PIGPIO_IN_BUTTON2 = 22,	// 15 Common
+	PIGPIO_IN_BUTTON3 = 23,	// 16 Common
+	PIGPIO_IN_ATN = 24,		// 18
+	PIGPIO_IN_DATA = 25,	// 22
+	//GPIO 26,				// 37
+	PIGPIO_IN_BUTTON1 = 27	// 13 Common
+	//PIGPIO_OUT_SOUND = 45 // ToDo internal GPIO connected with audio out left. To change for sound with Raspberry 1 A.Buch
+							// gives yet an overflow A.Buch 03. Jan. 2020. Sound is still disabled by EXPERIMENTALZERO
+};
+#endif
+
+
 
 enum PIGPIOMasks
 {
@@ -135,9 +188,11 @@ enum PIGPIOMasks
 	PIGPIO_MASK_IN_BUTTON3 = 1 << PIGPIO_IN_BUTTON3,
 	PIGPIO_MASK_IN_BUTTON4 = 1 << PIGPIO_IN_BUTTON4,
 	PIGPIO_MASK_IN_BUTTON5 = 1 << PIGPIO_IN_BUTTON5,
+	PIGPIO_MASK_ANY_BUTTON = PIGPIO_MASK_IN_BUTTON1 | PIGPIO_MASK_IN_BUTTON2 | PIGPIO_MASK_IN_BUTTON3 | PIGPIO_MASK_IN_BUTTON4 | PIGPIO_MASK_IN_BUTTON5
 };
 
 static const unsigned ButtonPinFlags[5] = { PIGPIO_MASK_IN_BUTTON1, PIGPIO_MASK_IN_BUTTON2, PIGPIO_MASK_IN_BUTTON3, PIGPIO_MASK_IN_BUTTON4, PIGPIO_MASK_IN_BUTTON5 };
+static int buttonCount = sizeof(ButtonPinFlags) / sizeof(unsigned);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Original Non-split lines
@@ -276,7 +331,7 @@ public:
 			RPI_SetGpioPinFunction((rpi_gpio_pin_t)PIGPIO_OUT_SRQ, FS_OUTPUT);
 		}
 	
-
+#if not defined(EXPERIMENTALZERO)
 		// Set up audio.
 		write32(CM_PWMDIV, CM_PASSWORD + 0x2000);
 		write32(CM_PWMCTL, CM_PASSWORD + CM_ENAB + CM_SRC_OSCILLATOR);	// Use Default 100MHz Clock
@@ -284,9 +339,8 @@ public:
 		write32(PWM_RNG1, 0x1B4);	// 8bit 44100Hz Mono
 		write32(PWM_RNG2, 0x1B4);
 		write32(PWM_CTL, PWM_USEF2 + PWM_PWEN2 + PWM_USEF1 + PWM_PWEN1 + PWM_CLRF1);
+#endif
 
-
-		int buttonCount = sizeof(ButtonPinFlags) / sizeof(unsigned);
 		for (index = 0; index < buttonCount; ++index)
 		{
 			InputButton[index] = false;
@@ -308,6 +362,13 @@ public:
 		}
 		RPI_GpioBase->GPPUD = 0;
 		RPI_GpioBase->GPPUDCLK0 = 0;
+
+		//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+		if (IEC_Bus::rotaryEncoderEnable == true)
+		{
+			IEC_Bus::rotaryEncoder.Initialize(RPI_GPIO22, RPI_GPIO23, RPI_GPIO27);
+		}
+
 	}
 
 	static inline void LetSRQBePulledHigh()
@@ -315,6 +376,13 @@ public:
 		SRQSetToOut = IEC_Bus::invertIECInputs;
 		RefreshOuts1581();
 	}
+
+#if defined(EXPERIMENTALZERO)
+	static inline bool AnyButtonPressed()
+	{
+		return ((gplev0 & PIGPIO_MASK_ANY_BUTTON) != PIGPIO_MASK_ANY_BUTTON);
+	}
+#endif
 
 	static inline void UpdateButton(int index, unsigned gplev0)
 	{
@@ -349,9 +417,50 @@ public:
 		}
 	}
 
+	
+	//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+	//
+	// Note: This method serves as a shim to allow the rotary encoder
+	//       logic to set a specific input button state (fooling the
+	//       original logic into thinking a button was pressed or
+	//       released).
+	//
+	static inline void SetButtonState(int index, bool state)
+	{
+
+		InputButtonPrev[index] = InputButton[index];
+		inputRepeatPrev[index] = inputRepeat[index];
+
+		if (state == true)
+		{
+
+			InputButton[index] = true;
+			validInputCount[index] = INPUT_BUTTON_DEBOUNCE_THRESHOLD;
+			inputRepeatThreshold[index] = INPUT_BUTTON_DEBOUNCE_THRESHOLD + INPUT_BUTTON_REPEAT_THRESHOLD;
+			inputRepeat[index]++;
+
+			validInputCount[index] = inputRepeatThreshold[index];
+			inputRepeat[index]++;
+			inputRepeatThreshold[index] += INPUT_BUTTON_REPEAT_THRESHOLD / inputRepeat[index];
+
+		}	
+		else
+		{
+
+			InputButton[index] = false;
+			validInputCount[index] = 0;
+			inputRepeatThreshold[index] = INPUT_BUTTON_REPEAT_THRESHOLD;
+			inputRepeat[index] = 0;
+			inputRepeatPrev[index] = 0;
+			
+		}
+
+	}
+
+
 	static void ReadBrowseMode(void);
+	static void ReadGPIOUserInput(int buttonCount);
 	static void ReadEmulationMode1541(void);
-	static void ReadButtonsEmulationMode(void);
 	static void ReadEmulationMode1581(void);
 
 	static void WaitUntilReset(void)
@@ -412,8 +521,10 @@ public:
 		if (OutputLED) set |= 1 << PIGPIO_OUT_LED;
 		else clear |= 1 << PIGPIO_OUT_LED;
 
+#if not defined(EXPERIMENTALZERO)
 		if (OutputSound) set |= 1 << PIGPIO_OUT_SOUND;
 		else clear |= 1 << PIGPIO_OUT_SOUND;
+#endif
 
 		write32(ARM_GPIO_GPSET0, set);
 		write32(ARM_GPIO_GPCLR0, clear);
@@ -495,7 +606,7 @@ public:
 	static inline bool IsClockReleased() { return !PI_Clock; }
 	static inline bool GetPI_Reset() { return PI_Reset; }
 	static inline bool IsDataSetToOut() { return DataSetToOut; }
-	static inline bool IsAtnaDataSetToOut() { return AtnaDataSetToOut; }
+	//static inline bool IsAtnaDataSetToOut() { return AtnaDataSetToOut; }
 	static inline bool IsClockSetToOut() { return ClockSetToOut; }
 	static inline bool IsReset() { return Resetting; }
 
@@ -544,6 +655,12 @@ public:
 		ignoreReset = value;
 	}
 
+	//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+	static inline void SetRotaryEncoderEnable(bool value)
+	{
+		rotaryEncoderEnable = value;
+	}
+
 	// CA1 input ATN
 	// If CA1 is ever set to output
 	//	- CA1 will start to drive pb7
@@ -553,37 +670,7 @@ public:
 	static m8520* CIA;
 	static IOPort* port;
 
-	static inline void Reset(void)
-	{
-		WaitUntilReset();
-
-		// VIA $1800
-		//	CA2, CB1 and CB2 are not connected (reads as high)
-		// VIA $1C00
-		//	CB1 not connected (reads as high)
-
-		VIA_Atna = false;
-		VIA_Data = false;
-		VIA_Clock = false;
-
-		DataSetToOut = false;
-		ClockSetToOut = false;
-		SRQSetToOut = false;
-
-		PI_Atn = false;
-		PI_Data = false;
-		PI_Clock = false;
-		PI_SRQ = false;
-
-		if (VIA)
-			AtnaDataSetToOut = (VIA_Atna != PI_Atn);
-		else
-			AtnaDataSetToOut = (VIA_Atna & PI_Atn);
-
-		if (AtnaDataSetToOut) PI_Data = true;
-
-		RefreshOuts1581();
-	}
+	static void Reset(void);
 
 	static bool GetInputButtonPressed(int buttonIndex) { return InputButton[buttonIndex] && !InputButtonPrev[buttonIndex]; }
 	static bool GetInputButtonReleased(int buttonIndex) { return InputButton[buttonIndex] == false; }
@@ -595,6 +682,9 @@ public:
 	static bool OutputSound;
 
 private:
+	static u32 oldClears;
+	static u32 oldSets;
+
 	static bool splitIECLines;
 	static bool invertIECInputs;
 	static bool invertIECOutputs;
@@ -634,5 +724,10 @@ private:
 	static u32 inputRepeatThreshold[5];
 	static u32 inputRepeat[5];
 	static u32 inputRepeatPrev[5];
+
+	//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+	static RotaryEncoder rotaryEncoder;
+	static bool rotaryEncoderEnable;
+
 };
 #endif

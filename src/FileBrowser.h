@@ -45,8 +45,6 @@
 #define VIC2_COLOUR_INDEX_LBLUE		14
 #define VIC2_COLOUR_INDEX_LGREY		15
 
-#define FILEBROWSER_MAX_PNG_SIZE	0x10000
-
 #define STATUS_BAR_POSITION_Y (40 * 16 + 10)
 
 #define KEYBOARD_SEARCH_BUFFER_SIZE 512
@@ -84,7 +82,6 @@ public:
 		BrowsableList* list;
 		u32 offset;
 		InputMappings* inputMappings;
-
 		ScreenBase* screen;
 		u32 columns;
 		u32 rows;
@@ -190,6 +187,8 @@ public:
 	void ClearSelections();
 
 	void ShowDeviceAndROM();
+	void ShowDeviceAndROM( const char* ROMName );
+	
 
 	void ClearScreen();
 
@@ -215,9 +214,7 @@ private:
 	//void UpdateInputDiskCaddy();
 
 	void UpdateCurrentHighlight();
-
 	//void RefeshDisplayForBrowsableList(FileBrowser::BrowsableList* browsableList, int xOffset, bool showSelected = true);
-
 	bool FillCaddyWithSelections();
 
 	bool AddToCaddy(FileBrowser::BrowsableList::Entry* current);
@@ -249,14 +246,12 @@ private:
 	bool buttonChangedROMDevice;
 
 	BrowsableList caddySelections;
-
+#if not defined(EXPERIMENTALZERO)
 	ScreenBase* screenMain;
+#endif
 	ScreenBase* screenLCD;
-
 	float scrollHighlightRate;
 
 	bool displayingDevices;
-
-	char PNG[FILEBROWSER_MAX_PNG_SIZE];
 };
 #endif

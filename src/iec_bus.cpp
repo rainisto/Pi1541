@@ -18,8 +18,10 @@
 
 #include "iec_bus.h"
 
-static int buttonCount = sizeof(ButtonPinFlags) / sizeof(unsigned);
+//#define REAL_XOR 1
 
+u32 IEC_Bus::oldClears = 0;
+u32 IEC_Bus::oldSets = 0;
 u32 IEC_Bus::PIGPIO_MASK_IN_ATN = 1 << PIGPIO_ATN;
 u32 IEC_Bus::PIGPIO_MASK_IN_DATA = 1 << PIGPIO_DATA;
 u32 IEC_Bus::PIGPIO_MASK_IN_CLOCK = 1 << PIGPIO_CLOCK;
@@ -69,26 +71,80 @@ u32 IEC_Bus::emulationModeCheckButtonIndex = 0;
 
 unsigned IEC_Bus::gplev0;
 
+//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+RotaryEncoder IEC_Bus::rotaryEncoder;
+bool IEC_Bus::rotaryEncoderEnable;
 
+
+void IEC_Bus::ReadGPIOUserInput( int buttonCount)
+{
+	//ROTARY: Added for rotary encoder support - 09/05/2019 by Geo...
+	if (IEC_Bus::rotaryEncoderEnable == true)
+	{
+		int indexEnter = 0;
+		int indexUp = 1;
+		int indexDown = 2;
+		int indexBack = 3;
+		int indexInsert = 4;
+
+		//Poll the rotary encoder
+		//
+		// Note: If the rotary encoder returns any value other than 'NoChange' an
+		//       event has been detected.  We force the button state of the original
+		//       input button registers to reflect the desired action, and allow the
+		//       original processing logic to do it's work.
+		//
+		rotary_result_t rotaryResult = IEC_Bus::rotaryEncoder.Poll(gplev0);
+		switch (rotaryResult)
+		{
+
+			case ButtonDown:
+				SetButtonState(indexEnter, true);
+				break;
+
+			case RotateNegative:
+				SetButtonState(indexUp, true);
+				break;
+
+			case RotatePositive:
+				SetButtonState(indexDown, true);
+				break;
+
+			default:
+				SetButtonState(indexEnter, false);
+				SetButtonState(indexUp, false);
+				SetButtonState(indexDown, false);
+				break;
+
+		}
+
+		UpdateButton(indexBack, gplev0);
+		UpdateButton(indexInsert, gplev0);
+	}
+	else // Unmolested original logic
+	{
+
+		int index;
+		for (index = 0; index < buttonCount; ++index)
+		{
+			UpdateButton(index, gplev0);
+		}
+
+	}
+}
+
+
+//ROTARY: Modified for rotary encoder support - 09/05/2019 by Geo...
 void IEC_Bus::ReadBrowseMode(void)
 {
-	IOPort* portB = 0;
 	gplev0 = read32(ARM_GPIO_GPLEV0);
-
-	int index;
-	for (index = 0; index < buttonCount; ++index)
-	{
-		UpdateButton(index, gplev0);
-	}
+	ReadGPIOUserInput(buttonCount);
 
 	bool ATNIn = (gplev0 & PIGPIO_MASK_IN_ATN) == (invertIECInputs ? PIGPIO_MASK_IN_ATN : 0);
 	if (PI_Atn != ATNIn)
 	{
 		PI_Atn = ATNIn;
 	}
-
-	if (portB && (portB->GetDirection() & 0x10) == 0)
-		AtnaDataSetToOut = false; // If the ATNA PB4 gets set to an input then we can't be pulling data low. (Maniac Mansion does this)
 
 	if (!AtnaDataSetToOut && !DataSetToOut)	// only sense if we have not brought the line low (because we can't as we have the pin set to output but we can simulate in software)
 	{
@@ -119,15 +175,6 @@ void IEC_Bus::ReadBrowseMode(void)
 	Resetting = !ignoreReset && ((gplev0 & PIGPIO_MASK_IN_RESET) == (invertIECInputs ? PIGPIO_MASK_IN_RESET : 0));
 }
 
-void IEC_Bus::ReadButtonsEmulationMode(void)
-{
-	int buttonIndex;
-	for (buttonIndex = 0; buttonIndex < 3; ++buttonIndex)
-	{
-		UpdateButton(buttonIndex, gplev0);
-	}
-}
-
 void IEC_Bus::ReadEmulationMode1541(void)
 {
 	bool AtnaDataSetToOutOld = AtnaDataSetToOut;
@@ -136,6 +183,7 @@ void IEC_Bus::ReadEmulationMode1541(void)
 
 	portB = port;
 
+#ifndef REAL_XOR
 	bool ATNIn = (gplev0 & PIGPIO_MASK_IN_ATN) == (invertIECInputs ? PIGPIO_MASK_IN_ATN : 0);
 	if (PI_Atn != ATNIn)
 	{
@@ -177,7 +225,34 @@ void IEC_Bus::ReadEmulationMode1541(void)
 		PI_Data = true;
 		portB->SetInput(VIAPORTPINS_DATAIN, true);	// simulate the read in software
 	}
+#else
+	bool ATNIn = (gplev0 & PIGPIO_MASK_IN_ATN) == (invertIECInputs ? PIGPIO_MASK_IN_ATN : 0);
+	if (PI_Atn != ATNIn)
+	{
+		PI_Atn = ATNIn;
 
+		{
+			portB->SetInput(VIAPORTPINS_ATNIN, ATNIn);	//is inverted and then connected to pb7 and ca1
+			VIA->InputCA1(ATNIn);
+		}
+	}
+
+	if (!DataSetToOut)	// only sense if we have not brought the line low (because we can't as we have the pin set to output but we can simulate in software)
+	{
+		bool DATAIn = (gplev0 & PIGPIO_MASK_IN_DATA) == (invertIECInputs ? PIGPIO_MASK_IN_DATA : 0);
+		//if (PI_Data != DATAIn)
+		{
+			PI_Data = DATAIn;
+			portB->SetInput(VIAPORTPINS_DATAIN, DATAIn);	// VIA DATAin pb0 output from inverted DIN 5 DATA
+		}
+	}
+	else
+	{
+		PI_Data = true;
+		portB->SetInput(VIAPORTPINS_DATAIN, true);	// simulate the read in software
+	}
+
+#endif
 	if (!ClockSetToOut)	// only sense if we have not brought the line low (because we can't as we have the pin set to output but we can simulate in software)
 	{
 		bool CLOCKIn = (gplev0 & PIGPIO_MASK_IN_CLOCK) == (invertIECInputs ? PIGPIO_MASK_IN_CLOCK : 0);
@@ -200,8 +275,6 @@ void IEC_Bus::ReadEmulationMode1581(void)
 {
 	IOPort* portB = 0;
 	gplev0 = read32(ARM_GPIO_GPLEV0);
-
-	ReadButtonsEmulationMode();
 
 	portB = port;
 
@@ -307,9 +380,10 @@ void IEC_Bus::RefreshOuts1541(void)
 
 	if (OutputLED) set |= 1 << PIGPIO_OUT_LED;
 	else clear |= 1 << PIGPIO_OUT_LED;
-
+#if not defined(EXPERIMENTALZERO)
 	if (OutputSound) set |= 1 << PIGPIO_OUT_SOUND;
 	else clear |= 1 << PIGPIO_OUT_SOUND;
+#endif
 
 	write32(ARM_GPIO_GPCLR0, clear);
 	write32(ARM_GPIO_GPSET0, set);
@@ -326,6 +400,7 @@ void IEC_Bus::PortB_OnPortOut(void* pUserData, unsigned char status)
 	VIA_Data = (status & (unsigned char)VIAPORTPINS_DATAOUT) != 0;		// VIA DATAout PB1 inverted and then connected to DIN DATA
 	VIA_Clock = (status & (unsigned char)VIAPORTPINS_CLOCKOUT) != 0;	// VIA CLKout PB3 inverted and then connected to DIN CLK
 
+#ifndef REAL_XOR
 	if (VIA)
 	{
 		// Emulate the XOR gate UD3
@@ -335,6 +410,9 @@ void IEC_Bus::PortB_OnPortOut(void* pUserData, unsigned char status)
 	{
 		AtnaDataSetToOut = (VIA_Atna & PI_Atn);
 	}
+#else
+	AtnaDataSetToOut = VIA_Atna;
+#endif
 
 	//if (AtnaDataSetToOut)
 	//{
@@ -370,3 +448,40 @@ void IEC_Bus::PortB_OnPortOut(void* pUserData, unsigned char status)
 	//if (AtnaDataSetToOutOld ^ AtnaDataSetToOut)
 	//	RefreshOuts1541();
 }
+
+void IEC_Bus::Reset(void)
+{
+	WaitUntilReset();
+
+	// VIA $1800
+	//	CA2, CB1 and CB2 are not connected (reads as high)
+	// VIA $1C00
+	//	CB1 not connected (reads as high)
+
+	VIA_Atna = false;
+	VIA_Data = false;
+	VIA_Clock = false;
+
+	DataSetToOut = false;
+	ClockSetToOut = false;
+	SRQSetToOut = false;
+
+	PI_Atn = false;
+	PI_Data = false;
+	PI_Clock = false;
+	PI_SRQ = false;
+
+#ifdef REAL_XOR
+	AtnaDataSetToOut = VIA_Atna;
+#else
+	if (VIA)
+		AtnaDataSetToOut = (VIA_Atna != PI_Atn);
+	else
+		AtnaDataSetToOut = (VIA_Atna & PI_Atn);
+
+	if (AtnaDataSetToOut) PI_Data = true;
+#endif
+
+	RefreshOuts1581();
+}
+

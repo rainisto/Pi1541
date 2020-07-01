@@ -113,7 +113,6 @@ void FileBrowser::BrowsableListView::RefreshLine(u32 entryIndex, u32 x, u32 y, b
 		}
 		int len = strlen(buffer2 + highlightScrollOffset);
 		strncpy(buffer1, buffer2 + highlightScrollOffset, sizeof(buffer1));
-
 		if (!screen->IsLCD())
 		{
 			// space pad the remainder of the line (but not on OLED)
@@ -121,7 +120,6 @@ void FileBrowser::BrowsableListView::RefreshLine(u32 entryIndex, u32 x, u32 y, b
 				buffer1[len++] = ' ';
 			buffer1[columnsMax] = 0;
 		}
-
 		if (selected)
 		{
 			if (entry->filImage.fattrib & AM_DIR)
@@ -133,7 +131,6 @@ void FileBrowser::BrowsableListView::RefreshLine(u32 entryIndex, u32 x, u32 y, b
 				colour = RGBA(0xff, 0, 0, 0xff);
 				if (entry->filImage.fattrib & AM_RDO)
 					colour = palette[VIC2_COLOUR_INDEX_RED];
-
 				screen->PrintText(false, x, y, buffer1, colour, RGBA(0xff, 0xff, 0xff, 0xff));
 			}
 		}
@@ -274,6 +271,15 @@ bool FileBrowser::BrowsableListView::CheckBrowseNavigation(bool pageOnly)
 				offset++;
 			dirty = true;
 		}
+		else
+		{
+			if (!pageOnly)
+			{
+				list->currentIndex = 0;
+				list->SetCurrent();
+				dirty = true;
+			}
+		}
 	}
 	if (inputMappings->BrowseUp())
 	{
@@ -287,6 +293,15 @@ bool FileBrowser::BrowsableListView::CheckBrowseNavigation(bool pageOnly)
 			if ((offset > 0) && (list->currentIndex < offset))
 				offset--;
 			dirty = true;
+		}
+		else
+		{
+			if (!pageOnly)
+			{
+				list->currentIndex = list->entries.size() - 1;
+				list->SetCurrent();
+				dirty = true;
+			}
 		}
 	}
 	if ((lcdPgUpDown && inputMappings->BrowsePageDownLCD()) || (!lcdPgUpDown && inputMappings->BrowsePageDown()))
@@ -403,6 +418,7 @@ bool FileBrowser::BrowsableList::CheckBrowseNavigation()
 		dirty |= views[index].CheckBrowseNavigation(index != 0);
 	}
 
+#if not defined(EXPERIMENTALZERO)
 	// check for keys a-z and 0-9
 	char searchChar = inputMappings->getKeyboardNumLetter();
 	if (searchChar)
@@ -474,6 +490,7 @@ bool FileBrowser::BrowsableList::CheckBrowseNavigation()
 			dirty |= 1;
 		}
 	}
+#endif
 	return dirty;
 }
 
@@ -499,11 +516,17 @@ FileBrowser::FileBrowser(InputMappings* inputMappings, DiskCaddy* diskCaddy, ROM
 	, roms(roms)
 	, deviceID(deviceID)
 	, displayPNGIcons(displayPNGIcons)
+#if not defined(EXPERIMENTALZERO)
 	, screenMain(screenMain)
+#endif
 	, screenLCD(screenLCD)
 	, scrollHighlightRate(scrollHighlightRate)
 	, displayingDevices(false)
 {
+
+	folder.scrollHighlightRate = scrollHighlightRate;
+
+#if not defined(EXPERIMENTALZERO)
 	u32 columns = screenMain->ScaleX(80);
 	u32 rows = (int)(38.0f * screenMain->GetScaleY());
 	u32 positionX = 0;
@@ -512,7 +535,6 @@ FileBrowser::FileBrowser(InputMappings* inputMappings, DiskCaddy* diskCaddy, ROM
 	if (rows < 1)
 		rows = 1;
 
-	folder.scrollHighlightRate = scrollHighlightRate;
 	folder.AddView(screenMain, inputMappings, columns, rows, positionX, positionY, false);
 
 	positionX = screenMain->ScaleX(1024 - 320);
@@ -520,16 +542,20 @@ FileBrowser::FileBrowser(InputMappings* inputMappings, DiskCaddy* diskCaddy, ROM
 	caddySelections.AddView(screenMain, inputMappings, columns, rows, positionX, positionY, false);
 
 
+#endif
 
 	if (screenLCD)
 	{
-		columns = screenLCD->Width() / 8;
-		rows = screenLCD->Height() / screenLCD->GetFontHeight();
-		positionX = 0;
-		positionY = 0;
+		u32 columns = screenLCD->Width() / 8;
+		u32 rows = screenLCD->Height() / screenLCD->GetFontHeight();
+		u32 positionX = 0;
+		u32 positionY = 0;
 
 		folder.AddView(screenLCD, inputMappings, columns, rows, positionX, positionY, true);
 	}
+
+	f_chdir("/1541");
+	RefreshFolderEntries();
 }
 
 u32 FileBrowser::Colour(int index)
@@ -622,7 +648,7 @@ void FileBrowser::RefreshFolderEntries()
 			{
 				res = f_readdir(&dir, &entry.filImage);
 				ext = strrchr(entry.filImage.fname, '.');
-				if (res == FR_OK && entry.filImage.fname[0] != 0 && !(ext && strcasecmp(ext, ".png") == 0))
+				if (res == FR_OK && entry.filImage.fname[0] != 0 && !(ext && strcasecmp(ext, ".png") == 0) && (entry.filImage.fname[0] != '.'))
 					folder.entries.push_back(entry);
 			} while (res == FR_OK && entry.filImage.fname[0] != 0);
 			f_closedir(&dir);
@@ -690,7 +716,6 @@ void FileBrowser::DeviceSwitched()
 	m_IEC_Commands.SetDisplayingDevices(displayingDevices);
 	FolderChanged();
 }
-
 /*
 void FileBrowser::RefeshDisplayForBrowsableList(FileBrowser::BrowsableList* browsableList, int xOffset, bool showSelected)
 {
@@ -769,9 +794,9 @@ void FileBrowser::RefeshDisplayForBrowsableList(FileBrowser::BrowsableList* brow
 	}
 }
 */
-
 void FileBrowser::RefeshDisplay()
 {
+#if not defined(EXPERIMENTALZERO)
 	u32 textColour = Colour(VIC2_COLOUR_INDEX_LGREEN);
 	u32 bgColour = Colour(VIC2_COLOUR_INDEX_GREY);
 	char buffer[1024];
@@ -780,11 +805,9 @@ void FileBrowser::RefeshDisplay()
 		screenMain->DrawRectangle(0, 0, (int)screenMain->Width(), 17, bgColour);
 		screenMain->PrintText(false, 0, 0, buffer, textColour, bgColour);
 	}
-
 	//u32 offsetX = screenMain->ScaleX(1024 - 320);
 	//RefeshDisplayForBrowsableList(&folder, 0);
 	//RefeshDisplayForBrowsableList(&caddySelections, offsetX, false);
-
 	folder.RefreshViews();
 	caddySelections.RefreshViews();
 
@@ -796,6 +819,10 @@ void FileBrowser::RefeshDisplay()
 		u32 y = screenMain->ScaleY(STATUS_BAR_POSITION_Y);
 		screenMain->PrintText(false, 0, y, folder.searchPrefix, textColour, bgColour);
 	}
+#else
+	folder.RefreshViews();
+	caddySelections.RefreshViews();
+#endif
 }
 
 bool FileBrowser::CheckForPNG(const char* filename, FILINFO& filIcon)
@@ -816,7 +843,7 @@ bool FileBrowser::CheckForPNG(const char* filename, FILINFO& filIcon)
 
 			strcat(fileName, ".png");
 
-			if (f_stat(fileName, &filIcon) == FR_OK && filIcon.fsize < FILEBROWSER_MAX_PNG_SIZE)
+			if (f_stat(fileName, &filIcon) == FR_OK)
 				foundValid = true;
 		}
 	}
@@ -825,7 +852,7 @@ bool FileBrowser::CheckForPNG(const char* filename, FILINFO& filIcon)
 
 void FileBrowser::DisplayPNG(FILINFO& filIcon, int x, int y)
 {
-	if (filIcon.fname[0] != 0 && filIcon.fsize < FILEBROWSER_MAX_PNG_SIZE)
+	if (filIcon.fname[0] != 0)
 	{
 		FIL fp;
 		FRESULT res;
@@ -833,24 +860,32 @@ void FileBrowser::DisplayPNG(FILINFO& filIcon, int x, int y)
 		res = f_open(&fp, filIcon.fname, FA_READ);
 		if (res == FR_OK)
 		{
-			u32 bytesRead;
-			SetACTLed(true);
-			f_read(&fp, PNG, FILEBROWSER_MAX_PNG_SIZE, &bytesRead);
-			SetACTLed(false);
-			f_close(&fp);
+			char* PNG = (char*)malloc(filIcon.fsize);
+			if (PNG)
+			{
+				u32 bytesRead;
+				SetACTLed(true);
+				f_read(&fp, PNG, filIcon.fsize, &bytesRead);
+				SetACTLed(false);
+				f_close(&fp);
 
-			int w;
-			int h;
-			int channels_in_file;
-			stbi_uc* image = stbi_load_from_memory((stbi_uc const*)PNG, bytesRead, &w, &h, &channels_in_file, 4);
-			if (image && (w == PNG_WIDTH && h == PNG_HEIGHT))
-			{
-				//DEBUG_LOG("Opened PNG %s w = %d h = %d cif = %d\r\n", fileName, w, h, channels_in_file);
-				screenMain->PlotImage((u32*)image, x, y, w, h);
-			}
-			else
-			{
-				//DEBUG_LOG("Invalid PNG size %d x %d\r\n", w, h);
+				int w;
+				int h;
+				int channels_in_file;
+				stbi_uc* image = stbi_load_from_memory((stbi_uc const*)PNG, bytesRead, &w, &h, &channels_in_file, 4);
+#if not defined(EXPERIMENTALZERO)
+
+				if (image && (w == PNG_WIDTH && h == PNG_HEIGHT))
+				{
+					//DEBUG_LOG("Opened PNG %s w = %d h = %d cif = %d\r\n", fileName, w, h, channels_in_file);
+					screenMain->PlotImage((u32*)image, x, y, w, h);
+				}
+				else
+				{
+					//DEBUG_LOG("Invalid PNG size %d x %d\r\n", w, h);
+				}
+#endif
+				free(PNG);
 			}
 		}
 	}
@@ -862,13 +897,15 @@ void FileBrowser::DisplayPNG(FILINFO& filIcon, int x, int y)
 
 void FileBrowser::DisplayPNG()
 {
+#if not defined(EXPERIMENTALZERO)
 	if (displayPNGIcons && folder.current)
 	{
 		FileBrowser::BrowsableList::Entry* current = folder.current;
 		u32 x = screenMain->ScaleX(1024) - PNG_WIDTH;
-		u32 y = screenMain->ScaleY(666) - PNG_HEIGHT;
+		u32 y = screenMain->ScaleY(616) - PNG_HEIGHT;
 		DisplayPNG(current->filIcon, x, y);
 	}
+#endif
 }
 
 int FileBrowser::IsAtRootOfDevice()
@@ -1175,7 +1212,7 @@ void FileBrowser::UpdateInputFolders()
 		char newFileName[64];
 		strncpy (newFileName, options.GetAutoBaseName(), 63);
 		int num = folder.FindNextAutoName( newFileName );
-		m_IEC_Commands.CreateD64(newFileName, "42", true);
+		m_IEC_Commands.CreateNewDisk(newFileName, "42", true);
 		FolderChanged();
 	}
 	else if (inputMappings->BrowseWriteProtect())
@@ -1318,7 +1355,7 @@ bool FileBrowser::SelectLST(const char* filenameLST)
 			{
 				//DEBUG_LOG("LST token = %s\r\n", token);
 				diskType = DiskImage::GetDiskImageTypeViaExtention(token);
-				if (diskType == DiskImage::D64 || diskType == DiskImage::G64 || diskType == DiskImage::NIB || diskType == DiskImage::NBZ)
+				if (diskType == DiskImage::D64 || diskType == DiskImage::G64 || diskType == DiskImage::NIB || diskType == DiskImage::NBZ || diskType == DiskImage::T64)
 				{
 					FileBrowser::BrowsableList::Entry* entry = folder.FindEntry(token);
 					if (entry && !(entry->filImage.fattrib & AM_DIR))
@@ -1369,18 +1406,26 @@ void FileBrowser::UpdateInputDiskCaddy()
 
 void FileBrowser::DisplayStatusBar()
 {
+#if not defined(EXPERIMENTALZERO)
 	u32 x = 0;
 	u32 y = screenMain->ScaleY(STATUS_BAR_POSITION_Y);
 
 	char bufferOut[128];
-	snprintf(bufferOut, 128, "LED 0 Motor 0 Track 18.0 ATN 0 DAT 0 CLK 0");
+	if (options.DisplayTemperature())
+		snprintf(bufferOut, 128, "LED 0 Motor 0 Track 18.0 ATN 0 DAT 0 CLK 0 00%cC", 248);
+	else
+		snprintf(bufferOut, 128, "LED 0 Motor 0 Track 18.0 ATN 0 DAT 0 CLK 0");
+
 	screenMain->PrintText(false, x, y, bufferOut, RGBA(0, 0, 0, 0xff), RGBA(0xff, 0xff, 0xff, 0xff));
+#endif
 }
 
 void FileBrowser::ClearScreen()
 {
+#if not defined(EXPERIMENTALZERO)
 	u32 bgColour = palette[VIC2_COLOUR_INDEX_BLUE];
 	screenMain->Clear(bgColour);
+#endif
 }
 
 void FileBrowser::ClearSelections()
@@ -1393,22 +1438,45 @@ void FileBrowser::ClearSelections()
 
 void FileBrowser::ShowDeviceAndROM()
 {
+	ShowDeviceAndROM(roms->GetSelectedROMName());
+}
+
+void FileBrowser::ShowDeviceAndROM( const char* ROMName )
+{
 	char buffer[256];
 	u32 textColour = RGBA(0, 0, 0, 0xff);
 	u32 bgColour = RGBA(0xff, 0xff, 0xff, 0xff);
 	u32 x = 0; // 43 * 8
-	u32 y = screenMain->ScaleY(STATUS_BAR_POSITION_Y) - 20;
+	u32 y;
 
-	snprintf(buffer, 256, "Device %2d %*s\r\n"
+#if not defined(EXPERIMENTALZERO)
+	y = screenMain->ScaleY(STATUS_BAR_POSITION_Y) - 20;
+
+	snprintf(buffer, 256, "Device %2d %*s"
 		, *deviceID
 		, roms->GetLongestRomNameLen()
-		, roms->ROMNames[roms->currentROMIndex]
+		, ROMName
 		);
+
 	screenMain->PrintText(false, x, y, buffer, textColour, bgColour);
+#endif
+	if (screenLCD)
+	{
+		x = 0;
+		y = 0;
+
+		snprintf(buffer, 256, "D%2d %s"
+			, *deviceID
+			, ROMName
+			);
+		screenLCD->PrintText(false, x, y, buffer, textColour, bgColour);
+		screenLCD->SwapBuffers();
+	}
 }
 
 void FileBrowser::DisplayDiskInfo(DiskImage* diskImage, const char* filenameForIcon)
 {
+#if not defined(EXPERIMENTALZERO)
 	// Ideally we should not have to load the entire disk to read the directory.
 	static const char* fileTypes[]=
 	{
@@ -1420,7 +1488,7 @@ void FileBrowser::DisplayDiskInfo(DiskImage* diskImage, const char* filenameForI
 	char name[17] = { 0 };
 	unsigned char buffer[260] = { 0 };
 	int charIndex;
-	u32 fontHeight = screenMain->GetFontHeight();
+	u32 fontHeight = screenMain->GetFontHeightDirectoryDisplay();
 	u32 x = 0;
 	u32 y = 0;
 	char bufferOut[128] = { 0 };
@@ -1437,6 +1505,55 @@ void FileBrowser::DisplayDiskInfo(DiskImage* diskImage, const char* filenameForI
 	u32 y_px = 0;
 
 	ClearScreen();
+
+	if (options.DisplayTracks())
+	{
+		for (track = 0; track < HALF_TRACK_COUNT; track += 2)
+		{
+			int yoffset = screenMain->ScaleY(400);
+			unsigned index;
+			unsigned length = diskImage->TrackLength(track);
+			unsigned countSync = 0;
+
+			u8 shiftReg = 0;
+			for (index = 0; index < length / 8; ++index)
+			{
+				RGBA colour;
+				unsigned count1s = 0;
+				bool sync = false;
+
+				int bit;
+
+				for (bit = 0; bit < 64; ++bit)
+				{
+					if (bit % 8 == 0)
+						shiftReg = diskImage->GetNextByte(track, index * 8 + bit / 8);
+
+					if (shiftReg & 0x80)
+					{
+						count1s++;
+						countSync++;
+						if (countSync == 10)
+							sync = true;
+					}
+					else
+					{
+						countSync = 0;
+					}
+					shiftReg <<= 1;
+				}
+
+				if (sync)
+					colour = RGBA(0xff, 0x00, 0x00, 0xFF);
+				else
+					colour = RGBA(0x00, (unsigned char)((float)count1s / 64.0f * 255.0f), 0x00, 0xFF);
+
+				screenMain->DrawRectangle(index, (track >> 1) * 4 + yoffset, index + 1, (track >> 1) * 4 + 4 + yoffset, colour);
+			}
+		}
+	}
+
+	track = 18;
 
 	if (diskImage->GetDecodedSector(track, sectorNo, buffer))
 	{
@@ -1626,6 +1743,7 @@ void FileBrowser::DisplayDiskInfo(DiskImage* diskImage, const char* filenameForI
 			DisplayPNG(filIcon, x, y);
 		}
 	}
+#endif
 }
 
 void FileBrowser::SelectAutoMountImage(const char* image)

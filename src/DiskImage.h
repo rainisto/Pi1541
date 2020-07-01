@@ -62,10 +62,14 @@ public:
 		LST,
 		D71,
 		D81,
+		T64,
+		PRG,
 		RAW
 	};
 
 	DiskImage();
+
+	static unsigned CreateNewDiskInRAM(const char* filenameNew, const char* ID, unsigned char* destBuffer = 0);
 
 	bool OpenD64(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
 	bool OpenG64(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
@@ -73,24 +77,55 @@ public:
 	bool OpenNBZ(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
 	bool OpenD71(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
 	bool OpenD81(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
+	bool OpenT64(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
+	bool OpenPRG(const FILINFO* fileInfo, unsigned char* diskImage, unsigned size);
 
 	void Close();
 
 	bool GetDecodedSector(u32 track, u32 sector, u8* buffer);
+
+	inline unsigned char GetNextByte(u32 track, u32 byte)
+	{
+#if defined(EXPERIMENTALZERO)
+		return tracks[(track << 13) + byte];
+#else
+		return tracks[track][byte];
+#endif
+	}
+
 
 	inline bool GetNextBit(u32 track, u32 byte, u32 bit)
 	{
 		//if (attachedImageSize == 0)
 		//	return 0;
 
+#if defined(EXPERIMENTALZERO)
+		return ((tracks[(track << 13) + byte] >> bit) & 1) != 0;
+#else
 		return ((tracks[track][byte] >> bit) & 1) != 0;
+#endif
 	}
+
 
 	inline void SetBit(u32 track, u32 byte, u32 bit, bool value)
 	{
 		if (attachedImageSize == 0)
 			return;
 
+#if defined(EXPERIMENTALZERO)
+		u8 dataOld = tracks[(track << 13) + byte];
+		u8 bitMask = 1 << bit;
+		if (value)
+		{
+			TestDirty(track, (dataOld & bitMask) == 0);
+			tracks[(track << 13) + byte] |= bitMask;
+		}
+		else
+		{
+			TestDirty(track, (dataOld & bitMask) != 0);
+			tracks[(track << 13) + byte] &= ~bitMask;
+		}
+#else
 		u8 dataOld = tracks[track][byte];
 		u8 bitMask = 1 << bit;
 		if (value)
@@ -103,6 +138,7 @@ public:
 			TestDirty(track, (dataOld & bitMask) != 0);
 			tracks[track][byte] &= ~bitMask;
 		}
+#endif
 	}
 
 	static const unsigned char SectorsPerTrack[42];
@@ -160,9 +196,18 @@ public:
 
 	union
 	{
+#if defined(EXPERIMENTALZERO)
+		unsigned char tracks[HALF_TRACK_COUNT * MAX_TRACK_LENGTH];
+#else
 		unsigned char tracks[HALF_TRACK_COUNT][MAX_TRACK_LENGTH];
+#endif
 		unsigned char tracksD81[HALF_TRACK_COUNT][2][MAX_TRACK_LENGTH];
 	};
+
+	bool WriteD64(char* name = 0);
+	bool WriteG64(char* name = 0);
+
+	unsigned GetHash() const { return hash; }
 
 private:
 	void CloseD64();
@@ -171,13 +216,13 @@ private:
 	void CloseNBZ();
 	void CloseD71();
 	void CloseD81();
+	void CloseT64();
 
-	bool WriteD64();
-	bool WriteG64();
 	bool WriteNIB();
 	bool WriteNBZ();
 	bool WriteD71();
 	bool WriteD81();
+	bool WriteT64(char* name = 0);
 
 	inline void TestDirty(u32 track, bool isDirty)
 	{
@@ -198,11 +243,20 @@ private:
 	void OutputD81HeaderByte(unsigned char*& dest, unsigned char byte);
 	void OutputD81DataByte(unsigned char*& src, unsigned char*& dest);
 
+	static bool AddFileToRAMD64(unsigned char* ramD64, const char* name, const unsigned char* data, unsigned length);
+	static unsigned char* RAMD64AddDirectoryEntry(unsigned char* ramD64, const char* name, const unsigned char* data, unsigned length);
+	static int RAMD64GetSectorOffset(int track, int sector);
+	static int RAMD64FreeSectors(unsigned char* ramD64);
+	static bool RAMD64FindFreeSector(bool searchForwards, unsigned char* ramD64, int lastTrackUsed, int lastSectorUsed, int& track, int& sector);
+	static bool RAMD64AllocateSector(unsigned char* ramD64, int track, int sector);
+	static bool WriteRAMD64(unsigned char* diskImage, unsigned size);
+	
 	bool readOnly;
 	bool dirty;
 	unsigned attachedImageSize;
 	DiskType diskType;
 	const FILINFO* fileInfo;
+	unsigned hash;
 
 	unsigned short trackLengths[HALF_TRACK_COUNT];
 	union

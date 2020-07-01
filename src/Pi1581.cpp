@@ -16,6 +16,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Pi1541. If not, see <http://www.gnu.org/licenses/>.
 
+#include "defs.h"
 #include "Pi1581.h"
 #include "iec_bus.h"
 #include "options.h"
@@ -93,6 +94,7 @@ extern u16 pc;
 u8 read6502_1581(u16 address)
 {
 	u8 value = 0;
+#if defined(PI1581SUPPORT)
 	if (address & 0x8000)
 	{
 		value = roms.Read1581(address);
@@ -115,6 +117,7 @@ u8 read6502_1581(u16 address)
 	{
 		value = address >> 8;	// Empty address bus
 	}
+#endif
 	return value;
 }
 
@@ -127,6 +130,7 @@ u8 peek6502_1581(u16 address)
 
 void write6502_1581(u16 address, const u8 value)
 {
+#if defined(PI1581SUPPORT)
 	if (address & 0x8000)
 	{
 		return;
@@ -145,6 +149,7 @@ void write6502_1581(u16 address, const u8 value)
 	{
 		s_u8Memory[address & 0x1fff] = value;
 	}
+#endif
 }
 
 static void CIAPortA_OnPortOut(void* pUserData, unsigned char status)

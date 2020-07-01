@@ -22,6 +22,7 @@
 #include "iec_bus.h"
 #include "ff.h"
 #include "debug.h"
+#include "DiskImage.h"
 
 struct TimerMicroSeconds
 {
@@ -62,7 +63,7 @@ public:
 		POP_TO_ROOT,
 		REFRESH,
 		DEVICEID_CHANGED,
-		DECIVE_SWITCHED,
+		DEVICE_SWITCHED,
 		RESET
 	};
 
@@ -73,7 +74,7 @@ public:
 	u8 GetDeviceId() { return deviceID; }
 
 	void SetLowercaseBrowseModeFilenames(bool value) { lowercaseBrowseModeFilenames = value; }
-
+	void SetNewDiskType(DiskImage::DiskType type) { newDiskType = type; }
 	void SetAutoBootFB128(bool autoBootFB128) { this->autoBootFB128 = autoBootFB128; }
 	void Set128BootSectorName(const char* SectorName) 
 	{
@@ -91,7 +92,7 @@ public:
 	const FILINFO* GetImageSelected() const { return &filInfoSelectedImage; }
 	void SetStarFileName(const char* fileName) { starFileName = fileName; }
 
-	int CreateD64(char* filenameNew, char* ID, bool automount);
+	int CreateNewDisk(char* filenameNew, char* ID, bool automount);
 
 	void SetDisplayingDevices(bool displayingDevices) { this->displayingDevices = displayingDevices; }
 
@@ -123,6 +124,7 @@ protected:
 		u32 bytesSent;
 		u32 open : 1;
 		u32 writing : 1;
+		u32 fileSize;
 
 		void Close();
 		bool WriteFull() const { return cursor >= sizeof(buffer); }
@@ -162,12 +164,15 @@ protected:
 
 	void Memory(void);
 	void User(void);
+	void Extended(void);
 
 	void ProcessCommand(void);
 
 	bool SendBuffer(Channel& channel, bool eoi);
 
 	u8 GetFilenameCharacter(u8 value);
+
+	int WriteNewDiskInRAM(char* filenameNew, bool automount, unsigned length);
 
 	UpdateAction updateAction;
 	u8 commandCode;
@@ -193,6 +198,7 @@ protected:
 
 	bool displayingDevices;
 	bool lowercaseBrowseModeFilenames;
+	DiskImage::DiskType newDiskType;
 };
 #endif
 
